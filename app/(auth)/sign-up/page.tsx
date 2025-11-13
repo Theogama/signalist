@@ -63,7 +63,7 @@ const SignUp = () => {
                     placeholder="contact@signalist.com"
                     register={register}
                     error={errors.email}
-                    // validation={{ required: 'Email name is required', pattern: /^\w+@\w+\.\w+$/, message: 'Email address is required' }}
+                    validation={{ required: 'Email name is required', pattern: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/, message: 'Email address is required' }}
                 />
 
                 <InputField

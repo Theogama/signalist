@@ -215,6 +215,16 @@ declare global {
         threshold: number;
         changePercent?: number;
     };
+
+    type AlertsListItem = {
+        _id: string;
+        symbol: string;
+        company: string;
+        targetPrice: number;
+        condition: 'greater' | 'less';
+        active: boolean;
+        createdAt?: string | Date;
+    };
 }
 
 export {};

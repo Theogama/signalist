@@ -3,9 +3,15 @@ import Image from "next/image";
 import NavItems from "@/components/NavItems";
 import UserDropdown from "@/components/UserDropdown";
 import {searchStocks} from "@/lib/actions/finnhub.actions";
+import { getWatchlistSymbolsByEmail } from "@/lib/actions/watchlist.actions";
 
 const Header = async ({ user }: { user: User }) => {
-    const initialStocks = await searchStocks();
+    const baseStocks = await searchStocks();
+    const symbols = await getWatchlistSymbolsByEmail(user?.email);
+    const initialStocks = baseStocks.map(s => ({
+        ...s,
+        isInWatchlist: symbols.includes(s.symbol.toUpperCase()),
+    }));
 
     return (
         <header className="sticky top-0 header">

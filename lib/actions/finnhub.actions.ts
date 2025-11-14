@@ -2,7 +2,9 @@
 
 import { getDateRange, validateArticle, formatArticle } from '@/lib/utils';
 import { POPULAR_STOCK_SYMBOLS } from '@/lib/constants';
-import { cache } from 'react';
+import { auth } from '@/lib/better-auth/auth';
+import { headers } from 'next/headers';
+import { getWatchlistSymbolsByEmail } from '@/lib/actions/watchlist.actions';
 
 const FINNHUB_BASE_URL = 'https://finnhub.io/api/v1';
 const NEXT_PUBLIC_FINNHUB_API_KEY = process.env.NEXT_PUBLIC_FINNHUB_API_KEY ?? '';
@@ -98,7 +100,7 @@ export async function getNews(symbols?: string[]): Promise<MarketNewsArticle[]> 
   }
 }
 
-export const searchStocks = cache(async (query?: string): Promise<StockWithWatchlistStatus[]> => {
+export async function searchStocks(query?: string): Promise<StockWithWatchlistStatus[]> {
   try {
     const token = process.env.FINNHUB_API_KEY ?? NEXT_PUBLIC_FINNHUB_API_KEY;
     if (!token) {
@@ -172,10 +174,131 @@ export const searchStocks = cache(async (query?: string): Promise<StockWithWatch
       })
       .slice(0, 15);
 
+    // Annotate with user's watchlist status
+    try {
+      const session = await auth.api.getSession({ headers: await headers() });
+      const email = session?.user?.email || '';
+      if (email) {
+        const symbols = await getWatchlistSymbolsByEmail(email);
+        const set = new Set(symbols.map((s) => s.toUpperCase()));
+        return mapped.map((m) => ({ ...m, isInWatchlist: set.has(m.symbol.toUpperCase()) }));
+      }
+    } catch (e) {
+      // non-fatal
+      console.warn('searchStocks: unable to annotate watchlist status', e);
+    }
+
     return mapped;
   } catch (err) {
     console.error('Error in stock search:', err);
     return [];
   }
-});
+}
+
+// Get combined stock details (quote, profile, financial metrics)
+export async function getStockDetails(symbol: string): Promise<{ symbol: string; profile?: ProfileData; quote?: QuoteData; financials?: FinancialsData; company?: string; currentPrice?: number; changePercent?: number; marketCap?: number; peRatio?: number; }> {
+  const token = process.env.FINNHUB_API_KEY ?? NEXT_PUBLIC_FINNHUB_API_KEY;
+  if (!token) throw new Error('FINNHUB API key is not configured');
+  const sym = symbol.toUpperCase();
+
+  // Fetch each endpoint independently, allowing partial failures
+  const [profileResult, quoteResult, financialsResult] = await Promise.allSettled([
+    fetchJSON<ProfileData>(`${FINNHUB_BASE_URL}/stock/profile2?symbol=${encodeURIComponent(sym)}&token=${token}`, 600),
+    fetchJSON<QuoteData>(`${FINNHUB_BASE_URL}/quote?symbol=${encodeURIComponent(sym)}&token=${token}`, 60),
+    fetchJSON<FinancialsData>(`${FINNHUB_BASE_URL}/stock/metric?symbol=${encodeURIComponent(sym)}&metric=all&token=${token}`, 1800),
+  ]);
+
+  const profile = profileResult.status === 'fulfilled' ? profileResult.value : null;
+  const quote = quoteResult.status === 'fulfilled' ? quoteResult.value : null;
+  const financials = financialsResult.status === 'fulfilled' ? financialsResult.value : null;
+
+  // Log errors for debugging
+  if (profileResult.status === 'rejected') {
+    console.error(`Error fetching profile for ${sym}:`, profileResult.reason);
+  }
+  if (quoteResult.status === 'rejected') {
+    console.error(`Error fetching quote for ${sym}:`, quoteResult.reason);
+  }
+  if (financialsResult.status === 'rejected') {
+    console.error(`Error fetching financials for ${sym}:`, financialsResult.reason);
+  }
+
+  const marketCap = typeof profile?.marketCapitalization === 'number' ? profile.marketCapitalization : undefined;
+  const peRatio = typeof (financials as any)?.metric?.peBasicExclExtraTTM === 'number' ? (financials as any).metric.peBasicExclExtraTTM : undefined;
+
+  return {
+    symbol: sym,
+    profile: profile || undefined,
+    quote: quote || undefined,
+    financials: financials || undefined,
+    company: profile?.name || sym,
+    currentPrice: quote?.c,
+    changePercent: quote?.dp,
+    marketCap,
+    peRatio,
+  };
+}
+
+// Get user's watchlist with live data for each item
+export async function getWatchlistWithData(): Promise<StockWithData[]> {
+  try {
+    const { getUserWatchlist } = await import('@/lib/actions/watchlist.actions');
+    const items = await getUserWatchlist();
+
+    const enriched = await Promise.allSettled(
+      items.map(async (it: any) => {
+        try {
+          const details = await getStockDetails(it.symbol);
+          const price = details.currentPrice ?? 0;
+          const change = details.changePercent ?? 0;
+          const marketCap = details.marketCap;
+          const pe = details.peRatio;
+
+          const priceFormatted = typeof price === 'number' ? `$${price.toFixed(2)}` : '-';
+          const changeFormatted = typeof change === 'number' ? `${change.toFixed(2)}%` : '-';
+          const marketCapFormatted = typeof marketCap === 'number' ? `$${(marketCap >= 1e12 ? (marketCap/1e12).toFixed(2)+'T' : marketCap >= 1e9 ? (marketCap/1e9).toFixed(2)+'B' : marketCap >= 1e6 ? (marketCap/1e6).toFixed(2)+'M' : marketCap.toFixed(0))}` : '-';
+          const peFormatted = typeof pe === 'number' ? pe.toFixed(2) : '-';
+
+          const out: StockWithData = {
+            userId: it.userId,
+            symbol: it.symbol,
+            company: details.company || it.company,
+            addedAt: it.addedAt,
+            currentPrice: price,
+            changePercent: change,
+            priceFormatted,
+            changeFormatted,
+            marketCap: marketCapFormatted,
+            peRatio: peFormatted,
+          };
+          return out;
+        } catch (e) {
+          console.error(`Error fetching details for ${it.symbol}:`, e);
+          // Return a fallback entry with minimal data
+          return {
+            userId: it.userId,
+            symbol: it.symbol,
+            company: it.company,
+            addedAt: it.addedAt,
+            currentPrice: 0,
+            changePercent: 0,
+            priceFormatted: '-',
+            changeFormatted: '-',
+            marketCap: '-',
+            peRatio: '-',
+          } as StockWithData;
+        }
+      })
+    );
+
+    // Filter out failed promises and return only successful results
+    return enriched
+      .filter((result): result is PromiseFulfilledResult<StockWithData> => result.status === 'fulfilled')
+      .map((result) => result.value);
+  } catch (e) {
+    console.error('getWatchlistWithData error:', e);
+    // Return empty array instead of throwing to allow page to render
+    return [];
+  }
+}
 

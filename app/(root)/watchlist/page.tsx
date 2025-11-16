@@ -6,6 +6,9 @@ import WatchlistTable from '@/components/WatchlistTable';
 import AlertsList from '@/components/AlertsList';
 import NewsList from '@/components/NewsList';
 
+// Force dynamic rendering to ensure fresh data on each request
+export const dynamic = 'force-dynamic';
+
 const Watchlist = async () => {
     const [initialStocks, watchlist, alerts] = await Promise.all([
         searchStocks(),

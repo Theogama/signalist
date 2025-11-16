@@ -225,6 +225,60 @@ declare global {
         active: boolean;
         createdAt?: string | Date;
     };
+
+    // Bot Trading Types
+    type BotSettings = {
+        userId: string;
+        enabled: boolean;
+        maxTradeSizePct: number;
+        stopLossPct: number;
+        takeProfitPct: number;
+        trailingStop: boolean;
+        exchange: string;
+        paperMode: boolean;
+        updatedAt?: Date;
+        createdAt?: Date;
+    };
+
+    type BotTrade = {
+        tradeId: string;
+        signalId: string;
+        userId: string;
+        symbol: string;
+        action: 'BUY' | 'SELL';
+        entryPrice: number;
+        exitPrice?: number;
+        quantity: number;
+        status: 'PENDING' | 'FILLED' | 'CLOSED' | 'CANCELLED' | 'FAILED';
+        profitLoss?: number;
+        profitLossPct?: number;
+        stopLossPrice?: number;
+        takeProfitPrice?: number;
+        trailingStopEnabled: boolean;
+        exchange: string;
+        exchangeOrderId?: string;
+        errorMessage?: string;
+        createdAt: Date;
+        filledAt?: Date;
+        closedAt?: Date;
+    };
+
+    // Signal Types
+    type Signal = {
+        id: string;
+        signalId: string;
+        symbol: string;
+        ticker: string;
+        action: 'BUY' | 'SELL';
+        price: number;
+        stopLoss?: number;
+        takeProfit?: number;
+        source: 'manual' | 'algorithm' | 'external_api' | 'user_alert';
+        status: 'active' | 'executed' | 'expired' | 'cancelled';
+        description?: string;
+        timestamp: Date | string;
+        expiresAt?: Date | string;
+    };
 }
 
 export {};

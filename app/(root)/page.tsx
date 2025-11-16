@@ -6,6 +6,7 @@ import {
     TOP_STORIES_WIDGET_CONFIG
 } from "@/lib/constants";
 import {sendDailyNewsSummary} from "@/lib/inngest/functions";
+import BotStatusWidget from "@/components/BotStatusWidget";
 
 const Home = () => {
     const scriptUrl = `https://s3.tradingview.com/external-embedding/embed-widget-`;
@@ -40,11 +41,14 @@ const Home = () => {
                     />
                 </div>
                 <div className="h-full md:col-span-1 xl:col-span-2">
-                    <TradingViewWidget
-                        scriptUrl={`${scriptUrl}market-quotes.js`}
-                        config={MARKET_DATA_WIDGET_CONFIG}
-                        height={600}
-                    />
+                    <div className="grid grid-cols-1 gap-6">
+                        <TradingViewWidget
+                            scriptUrl={`${scriptUrl}market-quotes.js`}
+                            config={MARKET_DATA_WIDGET_CONFIG}
+                            height={400}
+                        />
+                        <BotStatusWidget />
+                    </div>
                 </div>
             </section>
         </div>

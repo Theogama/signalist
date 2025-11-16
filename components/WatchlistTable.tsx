@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { WATCHLIST_TABLE_HEADER } from '@/lib/constants';
 import PriceAlertForm from '@/components/PriceAlertForm';
+import LivePrice from '@/components/LivePrice';
 import { useEffect, useMemo, useState } from 'react';
 
 export default function WatchlistTable({ watchlist }: WatchlistTableProps) {
@@ -41,11 +42,11 @@ export default function WatchlistTable({ watchlist }: WatchlistTableProps) {
                   {item.symbol}
                 </Link>
               </td>
-              <td className="table-cell py-4 px-2">{item.priceFormatted ?? '-'}</td>
               <td className="table-cell py-4 px-2">
-                <span className={Number(item.changePercent) >= 0 ? 'text-green-500' : 'text-red-400'}>
-                  {item.changeFormatted ?? '-'}
-                </span>
+                <LivePrice symbol={item.symbol} showChange={false} size="sm" />
+              </td>
+              <td className="table-cell py-4 px-2">
+                <LivePrice symbol={item.symbol} showChange={true} showPercent={true} size="sm" />
               </td>
               <td className="table-cell py-4 px-2">{item.marketCap ?? '-'}</td>
               <td className="table-cell py-4 px-2">{item.peRatio ?? '-'}</td>

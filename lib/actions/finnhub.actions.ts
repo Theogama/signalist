@@ -202,9 +202,10 @@ export async function getStockDetails(symbol: string): Promise<{ symbol: string;
   const sym = symbol.toUpperCase();
 
   // Fetch each endpoint independently, allowing partial failures
+  // Quote data must be fresh (no cache) for live prices - don't pass revalidateSeconds to use 'no-store'
   const [profileResult, quoteResult, financialsResult] = await Promise.allSettled([
     fetchJSON<ProfileData>(`${FINNHUB_BASE_URL}/stock/profile2?symbol=${encodeURIComponent(sym)}&token=${token}`, 600),
-    fetchJSON<QuoteData>(`${FINNHUB_BASE_URL}/quote?symbol=${encodeURIComponent(sym)}&token=${token}`, 60),
+    fetchJSON<QuoteData>(`${FINNHUB_BASE_URL}/quote?symbol=${encodeURIComponent(sym)}&token=${token}`), // No cache for live quotes
     fetchJSON<FinancialsData>(`${FINNHUB_BASE_URL}/stock/metric?symbol=${encodeURIComponent(sym)}&metric=all&token=${token}`, 1800),
   ]);
 

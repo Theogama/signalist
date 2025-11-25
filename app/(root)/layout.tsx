@@ -6,8 +6,11 @@ import {redirect} from "next/navigation";
 const Layout = async ({ children }: { children : React.ReactNode }) => {
     const session = await auth.api.getSession({ headers: await headers() });
 
-    if(!session?.user) redirect('/sign-in');
+    if(!session?.user || !session.user.id || !session.user.name || !session.user.email) {
+        redirect('/sign-in');
+    }
 
+    // TypeScript now knows session and session.user are not null after the check above
     const user = {
         id: session.user.id,
         name: session.user.name,

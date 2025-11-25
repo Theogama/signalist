@@ -57,7 +57,8 @@ export default function SearchCommand({
 
     useEffect(() => {
         debouncedSearch();
-    }, [searchTerm]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchTerm]); // Only depend on searchTerm, debouncedSearch is stable
 
     const handleSelectStock = () => {
         setOpen(false);

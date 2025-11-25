@@ -45,6 +45,11 @@ export default function BrokerManager() {
     try {
       const response = await fetch('/api/brokers');
       if (response.ok) {
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          console.error('Expected JSON but got:', contentType);
+          return;
+        }
         const data = await response.json();
         setBrokers(data);
       }
@@ -65,8 +70,14 @@ export default function BrokerManager() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to save broker');
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to save broker');
+        } else {
+          const text = await response.text().catch(() => '');
+          throw new Error(`Failed to save broker: ${response.status} ${text.substring(0, 200)}`);
+        }
       }
 
       toast.success(editingBroker ? 'Broker updated' : 'Broker added');

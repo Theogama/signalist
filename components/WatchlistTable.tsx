@@ -4,13 +4,24 @@ import Link from 'next/link';
 import { WATCHLIST_TABLE_HEADER } from '@/lib/constants';
 import PriceAlertForm from '@/components/PriceAlertForm';
 import LivePrice from '@/components/LivePrice';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 
 export default function WatchlistTable({ watchlist }: WatchlistTableProps) {
   const [rows, setRows] = useState<StockWithData[]>(watchlist || []);
+  const prevWatchlistRef = useRef<string>('');
 
   useEffect(() => {
-    setRows(watchlist || []);
+    // Create a stable key from watchlist to compare (without using rows state)
+    const watchlistKey = (watchlist || [])
+      .map(w => `${w.symbol}-${w.currentPrice || 0}`)
+      .sort()
+      .join('|');
+    
+    // Only update if watchlist actually changed
+    if (watchlistKey !== prevWatchlistRef.current) {
+      prevWatchlistRef.current = watchlistKey;
+      setRows(watchlist || []);
+    }
   }, [watchlist]);
 
   const headers = useMemo(() => WATCHLIST_TABLE_HEADER, []);

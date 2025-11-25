@@ -112,8 +112,13 @@ declare global {
     };
 
     type QuoteData = {
-        c?: number;
-        dp?: number;
+        c?: number;  // Current price
+        dp?: number; // Change percent
+        h?: number;  // High price
+        l?: number;  // Low price
+        o?: number;  // Open price
+        pc?: number; // Previous close
+        v?: number;  // Volume
     };
 
     type ProfileData = {

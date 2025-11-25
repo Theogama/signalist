@@ -74,7 +74,8 @@ export default function BotSettingsForm({ initialSettings }: BotSettingsFormProp
         paperMode: initialSettings.paperMode ?? true,
       });
     }
-  }, [initialSettings, reset]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSettings]); // reset is stable from react-hook-form
 
   const onSubmit = handleSubmit(async (data) => {
     setIsSubmitting(true);

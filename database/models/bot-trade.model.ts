@@ -34,8 +34,8 @@ export interface BotTradeDoc extends Document {
 const BotTradeSchema = new Schema<BotTradeDoc>(
   {
     tradeId: { type: String, required: true, unique: true, index: true },
-    signalId: { type: String, required: true, index: true },
-    userId: { type: String, required: true, index: true },
+    signalId: { type: String, required: true },
+    userId: { type: String, required: true },
     symbol: { type: String, required: true, uppercase: true, trim: true },
     action: { type: String, enum: ['BUY', 'SELL'], required: true },
     entryPrice: { type: Number, required: true, min: 0 },

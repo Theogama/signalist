@@ -19,6 +19,14 @@ async function fetchJSON<T>(url: string, revalidateSeconds?: number): Promise<T>
     const text = await res.text().catch(() => '');
     throw new Error(`Fetch failed ${res.status}: ${text}`);
   }
+  
+  // Check content-type before parsing JSON
+  const contentType = res.headers.get('content-type');
+  if (!contentType || !contentType.includes('application/json')) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Expected JSON but got ${contentType}: ${text.substring(0, 100)}`);
+  }
+  
   return (await res.json()) as T;
 }
 
@@ -249,30 +257,30 @@ export async function getWatchlistWithData(): Promise<StockWithData[]> {
     const enriched = await Promise.allSettled(
       items.map(async (it: any) => {
         try {
-          const details = await getStockDetails(it.symbol);
-          const price = details.currentPrice ?? 0;
-          const change = details.changePercent ?? 0;
-          const marketCap = details.marketCap;
-          const pe = details.peRatio;
+        const details = await getStockDetails(it.symbol);
+        const price = details.currentPrice ?? 0;
+        const change = details.changePercent ?? 0;
+        const marketCap = details.marketCap;
+        const pe = details.peRatio;
 
-          const priceFormatted = typeof price === 'number' ? `$${price.toFixed(2)}` : '-';
-          const changeFormatted = typeof change === 'number' ? `${change.toFixed(2)}%` : '-';
-          const marketCapFormatted = typeof marketCap === 'number' ? `$${(marketCap >= 1e12 ? (marketCap/1e12).toFixed(2)+'T' : marketCap >= 1e9 ? (marketCap/1e9).toFixed(2)+'B' : marketCap >= 1e6 ? (marketCap/1e6).toFixed(2)+'M' : marketCap.toFixed(0))}` : '-';
-          const peFormatted = typeof pe === 'number' ? pe.toFixed(2) : '-';
+        const priceFormatted = typeof price === 'number' ? `$${price.toFixed(2)}` : '-';
+        const changeFormatted = typeof change === 'number' ? `${change.toFixed(2)}%` : '-';
+        const marketCapFormatted = typeof marketCap === 'number' ? `$${(marketCap >= 1e12 ? (marketCap/1e12).toFixed(2)+'T' : marketCap >= 1e9 ? (marketCap/1e9).toFixed(2)+'B' : marketCap >= 1e6 ? (marketCap/1e6).toFixed(2)+'M' : marketCap.toFixed(0))}` : '-';
+        const peFormatted = typeof pe === 'number' ? pe.toFixed(2) : '-';
 
-          const out: StockWithData = {
-            userId: it.userId,
-            symbol: it.symbol,
+        const out: StockWithData = {
+          userId: it.userId,
+          symbol: it.symbol,
             company: details.company || it.company,
-            addedAt: it.addedAt,
-            currentPrice: price,
-            changePercent: change,
-            priceFormatted,
-            changeFormatted,
-            marketCap: marketCapFormatted,
-            peRatio: peFormatted,
-          };
-          return out;
+          addedAt: it.addedAt,
+          currentPrice: price,
+          changePercent: change,
+          priceFormatted,
+          changeFormatted,
+          marketCap: marketCapFormatted,
+          peRatio: peFormatted,
+        };
+        return out;
         } catch (e) {
           console.error(`Error fetching details for ${it.symbol}:`, e);
           // Return a fallback entry with minimal data

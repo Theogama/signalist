@@ -32,7 +32,28 @@ class MarketDataService {
   private isConnecting = false;
   private websocketEnabled = false; // Disable WebSocket by default
   private pollingInterval: NodeJS.Timeout | null = null;
-  private pollingDelay = 5000; // Poll every 5 seconds
+  private pollingDelay = 3000; // Poll every 3 seconds for live updates
+
+  /**
+   * Get base URL for API calls
+   * Returns empty string for client-side (relative URLs work)
+   * Returns absolute URL for server-side
+   */
+  private getBaseUrl(): string {
+    if (typeof window !== 'undefined') {
+      // Client-side: use relative URLs
+      return '';
+    }
+    // Server-side: need absolute URL
+    if (process.env.NEXT_PUBLIC_APP_URL) {
+      return process.env.NEXT_PUBLIC_APP_URL;
+    }
+    if (process.env.VERCEL_URL) {
+      return `https://${process.env.VERCEL_URL}`;
+    }
+    // Fallback to localhost for development
+    return 'http://localhost:3000';
+  }
 
   /**
    * Initialize WebSocket connection for real-time updates
@@ -168,8 +189,12 @@ class MarketDataService {
       // Send subscription message to server
       this.sendSubscription(upperSymbol, 'subscribe');
     } else {
-      // Use polling by default
+      // Use polling by default for live updates
       this.connect();
+      // Ensure polling starts immediately
+      if (!this.pollingInterval) {
+        this.startPolling();
+      }
     }
 
     // Return unsubscribe function
@@ -206,21 +231,40 @@ class MarketDataService {
    */
   async getCurrentPrice(symbol: string): Promise<LivePriceData | null> {
     try {
-      const response = await fetch(`/api/market-data/price/${symbol.toUpperCase()}`, {
+      const baseUrl = this.getBaseUrl();
+      const url = `${baseUrl}/api/market-data/price/${symbol.toUpperCase()}`;
+      
+      const response = await fetch(url, {
         cache: 'no-store',
         next: { revalidate: 0 },
       });
       
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `HTTP ${response.status}`);
+        } else {
+          const text = await response.text().catch(() => '');
+          throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+        }
+      }
+      
+      // Check content-type before parsing JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`Expected JSON but got ${contentType}: ${text.substring(0, 200)}`);
       }
       
       return await response.json();
     } catch (error: any) {
-      // Only log errors in development
-      if (process.env.NODE_ENV === 'development') {
-        console.debug('[MarketData] Error fetching price:', error.message);
+      // Log errors with more context
+      const errorMessage = error.message || 'Unknown error';
+      if (errorMessage.includes('Failed to parse URL')) {
+        console.error('[MarketData] URL parsing error - this usually means the service is running on server without proper base URL. Error:', errorMessage);
+      } else if (process.env.NODE_ENV === 'development') {
+        console.debug('[MarketData] Error fetching price:', errorMessage);
       }
       return null;
     }
@@ -235,7 +279,10 @@ class MarketDataService {
     }
 
     try {
-      const response = await fetch('/api/market-data/prices', {
+      const baseUrl = this.getBaseUrl();
+      const url = `${baseUrl}/api/market-data/prices`;
+      
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbols: symbols.map((s) => s.toUpperCase()) }),
@@ -245,6 +292,13 @@ class MarketDataService {
 
       if (!response.ok) {
         // Silently return empty map on error
+        return new Map();
+      }
+
+      // Check content-type before parsing JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        console.error('Expected JSON but got:', contentType);
         return new Map();
       }
 

@@ -22,16 +22,21 @@ export async function GET(
       );
     }
 
+    // Extract quote data for complete market information
+    const quote = stockData.quote;
+    const change = stockData.changePercent ? (stockData.currentPrice * stockData.changePercent) / 100 : 0;
+    
+    // Finnhub quote structure: { c: current, h: high, l: low, o: open, pc: previous close, v: volume }
     return NextResponse.json({
       symbol: stockData.symbol,
       price: stockData.currentPrice,
-      change: stockData.changePercent ? (stockData.currentPrice * stockData.changePercent) / 100 : 0,
+      change: change,
       changePercent: stockData.changePercent || 0,
-      volume: 0, // TODO: Get from quote data
-      high: 0, // TODO: Get from quote data
-      low: 0, // TODO: Get from quote data
-      open: 0, // TODO: Get from quote data
-      previousClose: 0, // TODO: Get from quote data
+      volume: quote?.v || 0,
+      high: quote?.h || stockData.currentPrice,
+      low: quote?.l || stockData.currentPrice,
+      open: quote?.o || stockData.currentPrice,
+      previousClose: quote?.pc || stockData.currentPrice,
       timestamp: Date.now(),
       source: 'finnhub' as const,
     });

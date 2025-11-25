@@ -43,33 +43,24 @@ export default function LivePrice({
     // Subscribe to live updates (uses polling by default)
     unsubscribe = marketDataService.subscribe(symbol, (data) => {
       if (isMounted) {
-        setPriceData(data);
+        setPriceData((prevData) => {
+          // Only update if data actually changed to prevent unnecessary re-renders
+          if (!prevData || prevData.price !== data.price || prevData.timestamp !== data.timestamp) {
+            return data;
+          }
+          return prevData;
+        });
         setIsLoading(false);
       }
     });
 
-    // Set up periodic refresh as fallback
-    const refreshInterval = setInterval(() => {
-      if (isMounted && !priceData) {
-        marketDataService.getCurrentPrice(symbol)
-          .then((data) => {
-            if (isMounted && data) {
-              setPriceData(data);
-              setIsLoading(false);
-            }
-          })
-          .catch(() => {
-            // Silently handle errors
-          });
-      }
-    }, 10000); // Refresh every 10 seconds if no data
+    // Remove the duplicate interval - subscription already handles updates
 
     return () => {
       isMounted = false;
       if (unsubscribe) {
         unsubscribe();
       }
-      clearInterval(refreshInterval);
     };
   }, [symbol]);
 

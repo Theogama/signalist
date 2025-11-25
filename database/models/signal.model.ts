@@ -39,7 +39,7 @@ export interface SignalDoc extends Document {
 const SignalSchema = new Schema<SignalDoc>(
   {
     signalId: { type: String, required: true, unique: true, index: true },
-    userId: { type: String, index: true }, // Optional user association
+    userId: { type: String }, // Optional user association
     symbol: { type: String, required: true, uppercase: true, trim: true, index: true },
     ticker: { type: String, required: true, trim: true },
     action: { type: String, enum: ['BUY', 'SELL'], required: true, index: true },
@@ -59,7 +59,7 @@ const SignalSchema = new Schema<SignalDoc>(
       index: true,
     },
     description: { type: String },
-    expiresAt: { type: Date, index: true },
+    expiresAt: { type: Date },
     metadata: { type: Schema.Types.Mixed },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },

@@ -25,16 +25,20 @@ export async function POST(request: NextRequest) {
           return null;
         }
 
+        // Extract quote data for complete market information
+        const quote = stockData.quote;
+        const change = stockData.changePercent ? (stockData.currentPrice * stockData.changePercent) / 100 : 0;
+
         return {
           symbol: stockData.symbol,
           price: stockData.currentPrice,
-          change: stockData.changePercent ? (stockData.currentPrice * stockData.changePercent) / 100 : 0,
+          change: change,
           changePercent: stockData.changePercent || 0,
-          volume: 0,
-          high: 0,
-          low: 0,
-          open: 0,
-          previousClose: 0,
+          volume: quote?.v || 0,
+          high: quote?.h || stockData.currentPrice,
+          low: quote?.l || stockData.currentPrice,
+          open: quote?.o || stockData.currentPrice,
+          previousClose: quote?.pc || stockData.currentPrice,
           timestamp: Date.now(),
           source: 'finnhub' as const,
         };

@@ -14,6 +14,7 @@ import { marketDataService } from '@/lib/services/market-data.service';
 import { sessionManager } from '@/lib/auto-trading/session-manager/SessionManager';
 import { logEmitter } from '@/lib/auto-trading/log-emitter/LogEmitter';
 import { automationManager } from '@/lib/auto-trading/automation/AutomationManager';
+import { TradingSessionChecker } from '@/lib/utils/trading-session-checker';
 
 export interface ActiveBot {
   botId: string;
@@ -29,6 +30,8 @@ export interface ActiveBot {
   startedAt: Date;
   riskManager: EnhancedRiskManager;
   historicalData: MarketData[]; // Store historical data for strategies
+  lastSessionLogTime?: number; // Track when we last logged session message
+  broker?: 'exness' | 'deriv'; // Broker type
 }
 
 class BotManagerService {
@@ -144,12 +147,28 @@ class BotManagerService {
     );
 
     // Start trading loop
+    logEmitter.info(
+      `Starting trading loop for ${instrument}. Checking for signals every 5 seconds...`,
+      userId,
+      { botId, instrument, paperTrading }
+    );
+    
     const intervalId = setInterval(async () => {
       await this.executeTradingLoop(activeBot);
     }, 5000); // Check every 5 seconds
 
     activeBot.intervalId = intervalId;
     this.activeBots.set(botKey, activeBot);
+    
+    // Execute first loop immediately
+    this.executeTradingLoop(activeBot).catch((error) => {
+      console.error(`Error in initial trading loop for bot ${botId}:`, error);
+      logEmitter.error(
+        `Error in trading loop: ${error.message}`,
+        userId,
+        { botId, error: error.message }
+      );
+    });
 
     return botKey;
   }
@@ -311,12 +330,75 @@ class BotManagerService {
         bot.historicalData.shift();
       }
 
+      // Check trading session first
+      const sessionConfig = {
+        enabled: !!(bot.parameters.sessionStart || bot.parameters.sessionEnd),
+        sessionStart: bot.parameters.sessionStart,
+        sessionEnd: bot.parameters.sessionEnd,
+      };
+
+      if (!TradingSessionChecker.isTradingAllowed(sessionConfig)) {
+        const timeUntilStart = TradingSessionChecker.getTimeUntilSessionStart(sessionConfig);
+        // Only log once per minute to avoid spam
+        const now = Date.now();
+        if (!bot.lastSessionLogTime || (now - bot.lastSessionLogTime) > 60000) {
+          logEmitter.info(
+            `Trading session is off. Next session starts in ${timeUntilStart} minutes.`,
+            bot.userId,
+            { botId: bot.botId, timeUntilStart, sessionConfig }
+          );
+          bot.lastSessionLogTime = now;
+        }
+        return; // Exit early if not in trading session
+      }
+
+      // Log market data status
+      logEmitter.info(
+        `Analyzing ${bot.instrument} | Price: ${marketData.last.toFixed(2)} | Historical data: ${bot.historicalData.length} candles`,
+        bot.userId,
+        { 
+          botId: bot.botId,
+          instrument: bot.instrument,
+          price: marketData.last,
+          historicalDataCount: bot.historicalData.length,
+          openPositions: openPositions.length
+        }
+      );
+
       // Analyze market and get signal (pass historical data)
       const signal = await bot.strategy.analyze(marketData, bot.historicalData);
+
+      if (!signal) {
+        // Log why no signal was generated (only occasionally to avoid spam)
+        if (Math.random() < 0.1) { // Log 10% of the time
+          logEmitter.info(
+            `No signal generated for ${bot.instrument}. Strategy conditions not met.`,
+            bot.userId,
+            { 
+              botId: bot.botId,
+              instrument: bot.instrument,
+              historicalDataCount: bot.historicalData.length,
+              price: marketData.last
+            }
+          );
+        }
+        return;
+      }
 
       if (signal) {
         // Emit signal
         logEmitter.signal(signal, bot.userId, bot.botId);
+
+        // Check if max trades limit is reached
+        const maxTrades = bot.parameters.maxTrades || 1;
+        if (openPositions.length >= maxTrades) {
+          logEmitter.risk(
+            `Trade blocked: Maximum concurrent trades limit reached (${openPositions.length}/${maxTrades})`,
+            bot.userId,
+            { signal, openPositions: openPositions.length, maxTrades }
+          );
+          return;
+        }
 
         // Check risk management
         const canTrade = await bot.riskManager.canTrade(
@@ -326,10 +408,18 @@ class BotManagerService {
         );
 
         if (!canTrade) {
+          // Get detailed reason why trade was blocked
+          const riskMetrics = bot.riskManager.getRiskMetrics();
           logEmitter.risk(
-            `Trade blocked by risk manager: ${signal.side} ${signal.symbol}`,
+            `Trade blocked by risk manager: ${signal.side} ${signal.symbol} | Balance: $${balance.toFixed(2)} | Daily P/L: $${riskMetrics.dailyPnl.toFixed(2)} | Daily Trades: ${riskMetrics.dailyTrades}`,
             bot.userId,
-            { signal, balance, openPositions: openPositions.length }
+            { 
+              signal, 
+              balance, 
+              openPositions: openPositions.length,
+              riskMetrics,
+              reason: 'Risk manager check failed'
+            }
           );
         } else {
           // Calculate position size
@@ -337,19 +427,31 @@ class BotManagerService {
           // For regular instruments, calculate quantity based on risk %
           const isDerivative = bot.instrument.includes('BOOM') || bot.instrument.includes('CRASH');
           
+          // Calculate position size based on risk settings
           let positionSize: number;
-          if (isDerivative) {
+          
+          // Use lotSize if specified, otherwise calculate based on risk %
+          if (bot.parameters.lotSize !== undefined && bot.parameters.lotSize > 0) {
+            positionSize = bot.parameters.lotSize;
+          } else if (isDerivative) {
             // For derivatives, position size = stake amount (in currency)
             // Calculate stake based on risk percentage of balance
             const riskAmount = (balance * (bot.parameters.riskPercent || 1)) / 100;
             positionSize = Math.max(1, Math.floor(riskAmount)); // Minimum $1 stake
           } else {
-            // For regular instruments, calculate quantity
+            // For regular instruments, calculate quantity based on risk %
             positionSize = bot.strategy.calculatePositionSize(
               balance,
               signal.entryPrice,
               signal.stopLoss
             );
+          }
+          
+          // Ensure position size respects risk percentage
+          const maxRiskAmount = (balance * (bot.parameters.riskPercent || 1)) / 100;
+          if (!isDerivative && positionSize * signal.entryPrice > maxRiskAmount) {
+            // Adjust position size to respect risk limit
+            positionSize = maxRiskAmount / signal.entryPrice;
           }
 
           signal.quantity = positionSize;
@@ -378,26 +480,31 @@ class BotManagerService {
                   bot.botId
                 );
                 
-                // Emit balance update
-                logEmitter.info(
-                  `Balance updated: $${balanceBefore.balance.toFixed(2)} -> $${balanceAfter.balance.toFixed(2)} | Equity: $${balanceAfter.equity.toFixed(2)} | Margin: $${balanceAfter.margin.toFixed(2)}`,
-                  bot.userId,
+                // Emit balance update immediately after trade
+                logEmitter.balanceUpdate(
                   {
                     balance: balanceAfter.balance,
                     equity: balanceAfter.equity,
                     margin: balanceAfter.margin,
                     freeMargin: balanceAfter.freeMargin,
-                  }
+                    marginLevel: balanceAfter.marginLevel,
+                  },
+                  bot.userId
                 );
               }
               await bot.paperTrader.updatePositions(marketData);
               
-              // Emit balance update after position update
+              // Emit balance update after position update (in case positions were closed)
               const finalBalance = bot.paperTrader.getBalance();
-              logEmitter.info(
-                `Position updated | Balance: $${finalBalance.balance.toFixed(2)} | Equity: $${finalBalance.equity.toFixed(2)} | Free Margin: $${finalBalance.freeMargin.toFixed(2)}`,
-                bot.userId,
-                finalBalance
+              logEmitter.balanceUpdate(
+                {
+                  balance: finalBalance.balance,
+                  equity: finalBalance.equity,
+                  margin: finalBalance.margin,
+                  freeMargin: finalBalance.freeMargin,
+                  marginLevel: finalBalance.marginLevel,
+                },
+                bot.userId
               );
             } else if (bot.adapter) {
               // Use smart execution with retry, confirmation, and slippage protection

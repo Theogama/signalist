@@ -1,8 +1,11 @@
-import { getBotSettings } from '@/lib/actions/bot.actions';
 import { getSignals } from '@/lib/actions/signals.actions';
+import { auth } from '@/lib/better-auth/auth';
+import { headers } from 'next/headers';
+import { botManager } from '@/lib/services/bot-manager.service';
 import SignalsList from '@/components/SignalsList';
 import CreateSignalForm from '@/components/CreateSignalForm';
 import SignalFilters from '@/components/SignalFilters';
+import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,16 +14,26 @@ export default async function SignalsPage({
 }: {
   searchParams: { status?: string; action?: string; source?: string; search?: string };
 }) {
-  const [botSettings, signalsResult] = await Promise.all([
-    getBotSettings(),
-    getSignals({
-      status: (searchParams.status as any) || 'active',
-      action: searchParams.action as 'BUY' | 'SELL' | undefined,
-      limit: 100,
-    }),
-  ]);
+  const session = await auth.api.getSession({ headers: await headers() });
+  const userId = session?.user?.id;
   
-  const isBotEnabled = botSettings.success && 'data' in botSettings && botSettings.data?.enabled;
+  // Check if user has active auto-trading bots using the new system
+  let hasActiveBot = false;
+  if (userId) {
+    try {
+      const userBots = botManager.getUserBots(userId);
+      hasActiveBot = userBots.some(bot => bot.isRunning);
+    } catch (error) {
+      console.error('Error checking bot status:', error);
+    }
+  }
+
+  const signalsResult = await getSignals({
+    status: (searchParams.status as any) || 'active',
+    action: searchParams.action as 'BUY' | 'SELL' | undefined,
+    limit: 100,
+  });
+  
   let signals = signalsResult.success && 'data' in signalsResult ? signalsResult.data || [] : [];
   
   // Client-side filtering for search and source (since they're not in the API yet)
@@ -46,10 +59,10 @@ export default async function SignalsPage({
           </p>
         </div>
         <div className="flex items-center gap-4">
-          {!isBotEnabled && (
+          {!hasActiveBot && (
             <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
               <p className="text-sm text-yellow-400">
-                Enable auto-trading in <a href="/settings/bot" className="underline font-semibold">Bot Settings</a> to execute trades automatically
+                Start auto-trading in <Link href="/autotrade" className="underline font-semibold hover:text-yellow-300">Auto Trading</Link> to execute trades automatically
               </p>
             </div>
           )}
@@ -59,7 +72,7 @@ export default async function SignalsPage({
 
       <SignalFilters />
 
-      <SignalsList signals={signals} isBotEnabled={isBotEnabled || false} />
+      <SignalsList signals={signals} isBotEnabled={hasActiveBot} />
     </div>
   );
 }

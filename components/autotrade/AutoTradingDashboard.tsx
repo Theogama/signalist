@@ -22,17 +22,26 @@ import {
 import BrokerConnectionModal from './BrokerConnectionModal';
 import InstrumentsSelector from './InstrumentsSelector';
 import BotsLibrary from './BotsLibrary';
-import BotConfigPanel from './BotConfigPanel';
+import AutoTradeSettingsPanel from './AutoTradeSettingsPanel';
 import StartStopControls from './StartStopControls';
 import StrategyPreviewChart from './StrategyPreviewChart';
 import LiveLogsPanel from './LiveLogsPanel';
 import TradesTable from './TradesTable';
 import BotBuilderUI from './BotBuilderUI';
 import AutomationPanel from './AutomationPanel';
+import PLTracker from './PLTracker';
+import LiveTradeUpdates from './LiveTradeUpdates';
+import OpenTrades from './OpenTrades';
+import ClosedTrades from './ClosedTrades';
+import BotDiagnosticsPanel from './BotDiagnosticsPanel';
 import { useWebSocket } from '@/lib/hooks/useWebSocket';
+import { useStateRestoration } from '@/lib/hooks/useStateRestoration';
 import { useAutoTradingStore as useStore } from '@/lib/stores/autoTradingStore';
 
 export default function AutoTradingDashboard() {
+  // Restore state on page load
+  const { isRestoring } = useStateRestoration();
+  
   // Initialize WebSocket connection
   useWebSocket();
   const {
@@ -46,11 +55,20 @@ export default function AutoTradingDashboard() {
     loadBots,
     loadInstruments,
     setBalance,
+    addLog,
   } = useAutoTradingStore();
 
   useEffect(() => {
     loadBots();
-  }, []); // Only run once on mount
+    
+    // Show restoration status
+    if (isRestoring) {
+      addLog({
+        level: 'info',
+        message: 'Restoring connection state...',
+      });
+    }
+  }, [isRestoring, loadBots, addLog]); // Only run once on mount
 
   useEffect(() => {
     if (connectedBroker) {
@@ -286,19 +304,8 @@ export default function AutoTradingDashboard() {
           {/* Bot Builder */}
           <BotBuilderUI />
 
-          {/* Bot Configuration */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Settings className="h-5 w-5" />
-                Bot Configuration
-              </CardTitle>
-              <CardDescription>Configure bot parameters</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <BotConfigPanel />
-            </CardContent>
-          </Card>
+          {/* Auto-Trade Settings Panel (Unified Settings) */}
+          <AutoTradeSettingsPanel disabled={botStatus === 'running'} />
 
           {/* Automation Panel */}
           <Card>
@@ -325,6 +332,12 @@ export default function AutoTradingDashboard() {
 
         {/* Right Column - Controls & Status */}
         <div className="space-y-6">
+          {/* Bot Diagnostics */}
+          <BotDiagnosticsPanel />
+
+          {/* P/L Tracker */}
+          <PLTracker />
+
           {/* Start/Stop Controls */}
           <Card>
             <CardHeader>
@@ -336,6 +349,9 @@ export default function AutoTradingDashboard() {
             </CardContent>
           </Card>
 
+          {/* Live Trade Updates */}
+          <LiveTradeUpdates />
+
           {/* Live Logs */}
           <Card>
             <CardHeader>
@@ -346,58 +362,13 @@ export default function AutoTradingDashboard() {
               <LiveLogsPanel />
             </CardContent>
           </Card>
-
-          {/* Quick Stats */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Quick Stats</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex justify-between">
-                <span className="text-gray-400">Open Trades</span>
-                <span className="text-gray-100 font-semibold">{openTrades.length}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Closed Trades</span>
-                <span className="text-gray-100 font-semibold">{closedTrades.length}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Bot Status</span>
-                <span className={`font-semibold ${
-                  botStatus === 'running' ? 'text-green-400' :
-                  botStatus === 'stopping' ? 'text-yellow-400' :
-                  botStatus === 'error' ? 'text-red-400' :
-                  'text-gray-400'
-                }`}>
-                  {botStatus.toUpperCase()}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
 
-      {/* Trades Tables */}
+      {/* Trades Sections */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Open Trades</CardTitle>
-            <CardDescription>Currently active positions</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <TradesTable trades={openTrades} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Closed Trades</CardTitle>
-            <CardDescription>Recent trade history</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <TradesTable trades={closedTrades.slice(-10)} />
-          </CardContent>
-        </Card>
+        <OpenTrades />
+        <ClosedTrades />
       </div>
     </div>
   );

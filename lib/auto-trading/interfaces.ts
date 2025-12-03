@@ -215,7 +215,7 @@ export interface IPaperTrader {
   /**
    * Simulate order fill
    */
-  simulateFill(order: OrderRequest, marketData: MarketData): OrderResponse;
+  simulateFill(order: OrderRequest, marketData: MarketData): Promise<OrderResponse>;
 
   /**
    * Update positions with current market data

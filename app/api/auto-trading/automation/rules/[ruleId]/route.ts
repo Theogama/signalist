@@ -10,7 +10,7 @@ import { automationManager } from '@/lib/auto-trading/automation/AutomationManag
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { ruleId: string } }
+  { params }: { params: Promise<{ ruleId: string }> }
 ) {
   try {
     const session = await auth.api.getSession({ headers: await headers() });
@@ -21,7 +21,8 @@ export async function DELETE(
       );
     }
 
-    automationManager.removeRule(params.ruleId);
+    const { ruleId } = await params;
+    automationManager.removeRule(ruleId);
 
     return NextResponse.json({
       success: true,

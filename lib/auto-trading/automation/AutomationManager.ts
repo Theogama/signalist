@@ -168,7 +168,8 @@ class AutomationManager {
     // Check profit target
     if (conditions.profitTarget || conditions.profitPercent) {
       const balance = bot.paperTrader?.getBalance() || { balance: 0, equity: 0 };
-      const initialBalance = bot.paperTrader?.getInitialBalance() || 10000;
+      // Use initial balance from bot params or default to 10000
+      const initialBalance = bot.parameters?.initialBalance || 10000;
       const profit = balance.equity - initialBalance;
       
       if (conditions.profitTarget && profit >= conditions.profitTarget) {
@@ -186,7 +187,8 @@ class AutomationManager {
     // Check loss limit
     if (conditions.lossLimit || conditions.lossPercent) {
       const balance = bot.paperTrader?.getBalance() || { balance: 0, equity: 0 };
-      const initialBalance = bot.paperTrader?.getInitialBalance() || 10000;
+      // Use initial balance from bot params or default to 10000
+      const initialBalance = bot.parameters?.initialBalance || 10000;
       const loss = initialBalance - balance.equity;
       
       if (conditions.lossLimit && loss >= conditions.lossLimit) {

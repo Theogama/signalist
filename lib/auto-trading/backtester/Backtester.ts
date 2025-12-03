@@ -100,7 +100,7 @@ export class Backtester implements IBacktester {
           openedAt: position.entryTime,
         };
 
-        const shouldExit = await strategy.shouldExit(positionObj, marketData);
+        let shouldExit = await strategy.shouldExit(positionObj, marketData);
 
         // Check stop loss / take profit
         let exitReason: 'STOPPED' | 'TAKE_PROFIT' | 'CLOSED' = 'CLOSED';
@@ -108,11 +108,11 @@ export class Backtester implements IBacktester {
 
         if (position.signal.stopLoss) {
           if (position.signal.side === 'BUY' && marketData.last <= position.signal.stopLoss) {
-            shouldExit || exitReason === 'STOPPED';
+            shouldExit = true;
             exitPrice = position.signal.stopLoss;
             exitReason = 'STOPPED';
           } else if (position.signal.side === 'SELL' && marketData.last >= position.signal.stopLoss) {
-            shouldExit || exitReason === 'STOPPED';
+            shouldExit = true;
             exitPrice = position.signal.stopLoss;
             exitReason = 'STOPPED';
           }
@@ -120,11 +120,11 @@ export class Backtester implements IBacktester {
 
         if (position.signal.takeProfit) {
           if (position.signal.side === 'BUY' && marketData.last >= position.signal.takeProfit) {
-            shouldExit || exitReason === 'TAKE_PROFIT';
+            shouldExit = true;
             exitPrice = position.signal.takeProfit;
             exitReason = 'TAKE_PROFIT';
           } else if (position.signal.side === 'SELL' && marketData.last <= position.signal.takeProfit) {
-            shouldExit || exitReason === 'TAKE_PROFIT';
+            shouldExit = true;
             exitPrice = position.signal.takeProfit;
             exitReason = 'TAKE_PROFIT';
           }

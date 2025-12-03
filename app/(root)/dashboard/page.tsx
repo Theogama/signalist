@@ -1,5 +1,8 @@
 
 import BotStatusWidget from '@/components/BotStatusWidget';
+import AutoTradeSyncWidget from '@/components/dashboard/AutoTradeSyncWidget';
+import LiveStatsCards from '@/components/dashboard/LiveStatsCards';
+import TradingStatisticsPanel from '@/components/dashboard/TradingStatisticsPanel';
 import { getBotTrades } from '@/lib/actions/bot.actions';
 import { getSignals } from '@/lib/actions/signals.actions';
 import Link from 'next/link';
@@ -41,53 +44,64 @@ export default async function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Bot Status Widget */}
+        {/* Auto-Trade Sync Widget - Shows live data from autotrade */}
         <div className="lg:col-span-1">
-          <BotStatusWidget />
+          <AutoTradeSyncWidget />
         </div>
 
-        {/* Quick Stats */}
-        <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-400">Active Trades</span>
-              <Activity className="h-5 w-5 text-blue-400" />
-            </div>
-            <div className="text-2xl font-bold text-gray-100">{activeTrades}</div>
-            <Link href="/dashboard/bot-trades">
-              <Button variant="ghost" size="sm" className="mt-2 text-xs text-gray-400 hover:text-gray-300">
-                View all trades →
-              </Button>
-            </Link>
-          </div>
+        {/* Live Stats Cards - Real-time auto-trade stats */}
+        <LiveStatsCards />
 
-          <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-400">Total P/L</span>
-              <TrendingUp className="h-5 w-5 text-green-400" />
-            </div>
-            <div className={`text-2xl font-bold ${totalProfitLoss >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {totalProfitLoss >= 0 ? '+' : ''}${totalProfitLoss.toFixed(2)}
-            </div>
-            <Link href="/dashboard/analytics">
-              <Button variant="ghost" size="sm" className="mt-2 text-xs text-gray-400 hover:text-gray-300">
-                View analytics →
-              </Button>
-            </Link>
-          </div>
+        {/* Legacy Bot Status Widget - Fallback for database stats */}
+        <div className="lg:col-span-1 hidden lg:block">
+          <BotStatusWidget />
+        </div>
+      </div>
 
-          <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-400">Active Signals</span>
-              <Signal className="h-5 w-5 text-yellow-400" />
-            </div>
-            <div className="text-2xl font-bold text-gray-100">{recentSignals.length}</div>
-            <Link href="/signals">
-              <Button variant="ghost" size="sm" className="mt-2 text-xs text-gray-400 hover:text-gray-300">
-                View all signals →
-              </Button>
-            </Link>
+      {/* Trading Statistics Panel - Persistent Data */}
+      <TradingStatisticsPanel />
+
+      {/* Additional Stats Row */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-gray-400">Database Trades</span>
+            <Activity className="h-5 w-5 text-blue-400" />
           </div>
+          <div className="text-2xl font-bold text-gray-100">{activeTrades}</div>
+          <Link href="/dashboard/bot-trades">
+            <Button variant="ghost" size="sm" className="mt-2 text-xs text-gray-400 hover:text-gray-300">
+              View all trades →
+            </Button>
+          </Link>
+        </div>
+
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-gray-400">Database P/L</span>
+            <TrendingUp className="h-5 w-5 text-green-400" />
+          </div>
+          <div className={`text-2xl font-bold ${totalProfitLoss >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {totalProfitLoss >= 0 ? '+' : ''}${totalProfitLoss.toFixed(2)}
+          </div>
+          <Link href="/dashboard/analytics">
+            <Button variant="ghost" size="sm" className="mt-2 text-xs text-gray-400 hover:text-gray-300">
+              View analytics →
+            </Button>
+          </Link>
+        </div>
+
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-gray-400">Active Signals</span>
+            <Signal className="h-5 w-5 text-yellow-400" />
+          </div>
+          <div className="text-2xl font-bold text-gray-100">{recentSignals.length}</div>
+          <Link href="/signals">
+            <Button variant="ghost" size="sm" className="mt-2 text-xs text-gray-400 hover:text-gray-300">
+              View all signals →
+            </Button>
+          </Link>
         </div>
       </div>
 

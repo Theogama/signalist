@@ -34,6 +34,18 @@ export async function GET(request: NextRequest) {
         // Subscribe to log events
         unsubscribe = logEmitter.subscribe(userId, (log) => {
           try {
+            // If log has balance data, send it as a balance update
+            if (log.type === 'balance' && log.data) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    type: 'balance',
+                    data: log.data,
+                  })}\n\n`
+                )
+              );
+            }
+            // Always send log events
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ type: 'log', data: log })}\n\n`)
             );
@@ -98,34 +110,42 @@ export async function GET(request: NextRequest) {
             }
 
             // Send balance update (get fresh balance from PaperTrader)
-            if (activeBots.length > 0 && activeBots[0].paperTrader) {
-              const freshBalance = activeBots[0].paperTrader.getBalance();
+            // Aggregate balance from all active bots
+            if (activeBots.length > 0) {
+              // Use aggregated totals if we have them, otherwise get from first bot
+              let balanceToSend;
+              if (totalBalance > 0) {
+                balanceToSend = {
+                  balance: totalBalance,
+                  equity: totalEquity,
+                  margin: totalMargin,
+                  freeMargin: Math.max(0, totalEquity - totalMargin),
+                  marginLevel: totalMargin > 0 ? (totalEquity / totalMargin) * 100 : 0,
+                };
+              } else if (activeBots[0].paperTrader) {
+                const freshBalance = activeBots[0].paperTrader.getBalance();
+                balanceToSend = {
+                  balance: freshBalance.balance,
+                  equity: freshBalance.equity,
+                  margin: freshBalance.margin,
+                  freeMargin: freshBalance.freeMargin,
+                  marginLevel: freshBalance.marginLevel,
+                };
+              } else {
+                balanceToSend = {
+                  balance: 10000,
+                  equity: 10000,
+                  margin: 0,
+                  freeMargin: 10000,
+                  marginLevel: 0,
+                };
+              }
+              
               controller.enqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({
                     type: 'balance',
-                    data: {
-                      balance: freshBalance.balance,
-                      equity: freshBalance.equity,
-                      margin: freshBalance.margin,
-                      freeMargin: freshBalance.freeMargin,
-                      marginLevel: freshBalance.marginLevel,
-                    },
-                  })}\n\n`
-                )
-              );
-            } else {
-              // Fallback if no active trader
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: 'balance',
-                    data: {
-                      balance: totalBalance || 10000,
-                      equity: totalEquity || 10000,
-                      margin: totalMargin,
-                      freeMargin: (totalEquity || 10000) - totalMargin,
-                    },
+                    data: balanceToSend,
                   })}\n\n`
                 )
               );

@@ -14,7 +14,7 @@ export interface LogEvent {
   botId?: string;
   sessionId?: string;
   data?: any;
-  type?: 'price' | 'signal' | 'order' | 'risk' | 'system' | 'trade';
+  type?: 'price' | 'signal' | 'order' | 'risk' | 'system' | 'trade' | 'balance';
 }
 
 type LogListener = (log: LogEvent) => void;
@@ -221,6 +221,25 @@ class LogEmitter {
       userId,
       data,
       type: 'risk',
+    });
+  }
+
+  /**
+   * Emit balance update
+   */
+  balanceUpdate(balance: {
+    balance: number;
+    equity: number;
+    margin: number;
+    freeMargin: number;
+    marginLevel?: number;
+  }, userId?: string): void {
+    this.emit({
+      level: 'info',
+      message: `Balance: $${balance.balance.toFixed(2)} | Equity: $${balance.equity.toFixed(2)} | Margin: $${balance.margin.toFixed(2)}`,
+      userId,
+      data: balance,
+      type: 'balance',
     });
   }
 

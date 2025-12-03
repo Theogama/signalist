@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
       name: string;
       description: string;
       source: 'registered' | 'xml';
+      strategyName?: string; // Strategy name for registered bots
       fileName?: string;
       tradeType?: string;
       symbol?: string;
@@ -58,6 +59,7 @@ export async function GET(request: NextRequest) {
         name: name,
         description: `Trading strategy: ${name}`,
         source: 'registered',
+        strategyName: name, // Store the actual strategy name for mapping
         parameters: {
           riskPercent: 1,
           takeProfitPercent: 2,

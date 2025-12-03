@@ -4,7 +4,7 @@
  */
 
 import { EnhancedBaseStrategy } from './EnhancedBaseStrategy';
-import { StrategySignal, MarketData } from '../types';
+import { StrategySignal, MarketData, Position } from '../types';
 
 export class EvenOddStrategy extends EnhancedBaseStrategy {
   private consecutiveLosses: number = 0;

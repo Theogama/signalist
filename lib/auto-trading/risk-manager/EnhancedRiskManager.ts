@@ -112,7 +112,7 @@ export class EnhancedRiskManager implements IRiskManager {
   ): number {
     if (!this.limits.useATRForSL || !atr) {
       // Fallback to percentage-based
-      const percent = this.limits.stopLossPercent || this.limits.maxRiskPerTrade || 1;
+      const percent = this.limits.minStopLossPercent || this.limits.maxRiskPerTrade || 1;
       return side === 'BUY'
         ? entryPrice * (1 - percent / 100)
         : entryPrice * (1 + percent / 100);

@@ -43,7 +43,8 @@ export default function InstrumentsSelector() {
   const selectedSymbol = connectedBroker === 'deriv' && selectedInstrument?.symbol 
     ? selectedInstrument.symbol 
     : undefined;
-  const { price, isConnected } = useDerivWebSocket(selectedSymbol);
+  const { tickData, isConnected } = useDerivWebSocket(selectedSymbol);
+  const price = tickData?.quote || undefined;
 
   useEffect(() => {
     if (connectedBroker && availableInstruments.length === 0) {
@@ -128,7 +129,7 @@ export default function InstrumentsSelector() {
                   {isConnected ? 'Live' : 'Connecting...'}
                 </span>
               </div>
-              {price > 0 && (
+              {price !== undefined && price > 0 && (
                 <div className="text-right">
                   <span className="text-lg font-bold text-gray-100">
                     {price.toFixed(2)}

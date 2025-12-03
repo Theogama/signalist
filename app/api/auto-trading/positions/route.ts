@@ -27,8 +27,26 @@ export async function GET(request: NextRequest) {
     let totalEquity = 0;
     let totalMargin = 0;
 
+    // If no active bots, return default values
+    if (activeBots.length === 0) {
+      return NextResponse.json({
+        success: true,
+        data: {
+          openTrades: [],
+          closedTrades: [],
+          balance: {
+            balance: 10000,
+            equity: 10000,
+            margin: 0,
+            freeMargin: 10000,
+          },
+        },
+      });
+    }
+
     for (const bot of activeBots) {
       if (bot.paperTrader) {
+        // Get fresh balance (recalculates equity with current market prices)
         const balance = bot.paperTrader.getBalance();
         totalBalance += balance.balance;
         totalEquity += balance.equity;
@@ -64,16 +82,23 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Use first bot's balance if multiple bots (or aggregate if needed)
+    // For now, if we have at least one bot, use its balance
+    const finalBalance = totalBalance > 0 ? totalBalance : 10000;
+    const finalEquity = totalEquity > 0 ? totalEquity : 10000;
+    const finalMargin = totalMargin;
+    const finalFreeMargin = Math.max(0, finalEquity - finalMargin);
+
     return NextResponse.json({
       success: true,
       data: {
         openTrades,
         closedTrades,
         balance: {
-          balance: totalBalance || 10000,
-          equity: totalEquity || 10000,
-          margin: totalMargin,
-          freeMargin: (totalEquity || 10000) - totalMargin,
+          balance: finalBalance,
+          equity: finalEquity,
+          margin: finalMargin,
+          freeMargin: finalFreeMargin,
         },
       },
     });

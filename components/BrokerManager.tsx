@@ -193,7 +193,7 @@ export default function BrokerManager() {
                     setFormData({
                       ...formData,
                       name: value,
-                      type: broker?.type || 'crypto',
+                      type: (broker?.type || 'crypto') as 'crypto' | 'stock' | 'forex',
                     });
                   }}
                 >

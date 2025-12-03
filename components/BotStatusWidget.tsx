@@ -1,17 +1,34 @@
 import Link from 'next/link';
 import { Bot, Settings, AlertCircle, TrendingUp, TrendingDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { getBotSettings, getBotTrades } from '@/lib/actions/bot.actions';
+import { getBotTrades } from '@/lib/actions/bot.actions';
 import { getBotAnalytics } from '@/lib/actions/bot-analytics.actions';
+import { auth } from '@/lib/better-auth/auth';
+import { headers } from 'next/headers';
+import { botManager } from '@/lib/services/bot-manager.service';
 
 export default async function BotStatusWidget() {
-  const [settingsResult, tradesResult, analyticsResult] = await Promise.all([
-    getBotSettings(),
+  const session = await auth.api.getSession({ headers: await headers() });
+  const userId = session?.user?.id;
+  
+  // Check if user has active auto-trading bots using the new system
+  let hasActiveBot = false;
+  let activeBotCount = 0;
+  if (userId) {
+    try {
+      const userBots = botManager.getUserBots(userId);
+      hasActiveBot = userBots.some(bot => bot.isRunning);
+      activeBotCount = userBots.filter(bot => bot.isRunning).length;
+    } catch (error) {
+      console.error('Error checking bot status:', error);
+    }
+  }
+
+  const [tradesResult, analyticsResult] = await Promise.all([
     getBotTrades({ limit: 1000 }),
     getBotAnalytics(),
   ]);
 
-  const settings = settingsResult.success && 'data' in settingsResult ? settingsResult.data : null;
   const trades = tradesResult.success && 'data' in tradesResult ? tradesResult.data || [] : [];
   const analytics = analyticsResult.success && 'data' in analyticsResult ? analyticsResult.data : null;
 
@@ -24,8 +41,8 @@ export default async function BotStatusWidget() {
   }, 0);
 
   const stats = {
-    enabled: settings?.enabled || false,
-    paperMode: settings?.paperMode !== false,
+    enabled: hasActiveBot,
+    activeBotCount,
     totalTrades: trades.length,
     activeTrades,
     totalProfitLoss,
@@ -40,10 +57,10 @@ export default async function BotStatusWidget() {
           <Bot className="h-5 w-5 text-yellow-400" />
           <h3 className="text-lg font-semibold text-gray-100">Auto-Trade Bot</h3>
         </div>
-        <Link href="/settings/bot">
+        <Link href="/autotrade">
           <Button variant="ghost" size="sm" className="text-yellow-400 hover:text-yellow-300">
             <Settings className="h-4 w-4 mr-2" />
-            Settings
+            Auto Trade
           </Button>
         </Link>
       </div>
@@ -60,12 +77,14 @@ export default async function BotStatusWidget() {
           </span>
         </div>
 
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-400">Mode</span>
-          <span className="text-sm font-medium text-gray-300">
-            {stats.paperMode ? 'Paper Trading' : 'Live Trading'}
-          </span>
-        </div>
+        {stats.activeBotCount > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-400">Active Bots</span>
+            <span className="text-sm font-medium text-gray-300">
+              {stats.activeBotCount}
+            </span>
+          </div>
+        )}
 
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-400">Total Trades</span>
@@ -124,11 +143,11 @@ export default async function BotStatusWidget() {
             <AlertCircle className="h-4 w-4 text-yellow-400 mt-0.5 flex-shrink-0" />
             <div className="flex-1">
               <p className="text-xs text-yellow-400">
-                Bot is disabled. Enable it in{' '}
-                <Link href="/settings/bot" className="underline font-semibold">
-                  Bot Settings
+                No active bots. Start auto-trading in{' '}
+                <Link href="/autotrade" className="underline font-semibold hover:text-yellow-300">
+                  Auto Trading
                 </Link>{' '}
-                to start automated trading.
+                to execute trades automatically.
               </p>
             </div>
           </div>

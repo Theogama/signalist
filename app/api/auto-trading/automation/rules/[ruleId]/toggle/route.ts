@@ -9,7 +9,7 @@ import { automationManager } from '@/lib/auto-trading/automation/AutomationManag
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { ruleId: string } }
+  { params }: { params: Promise<{ ruleId: string }> }
 ) {
   try {
     const session = await auth.api.getSession({ headers: await headers() });
@@ -22,8 +22,9 @@ export async function POST(
 
     const body = await request.json();
     const { enabled } = body;
+    const { ruleId } = await params;
 
-    automationManager.toggleRule(params.ruleId, enabled);
+    automationManager.toggleRule(ruleId, enabled);
 
     return NextResponse.json({
       success: true,

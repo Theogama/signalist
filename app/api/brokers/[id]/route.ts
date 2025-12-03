@@ -12,7 +12,7 @@ const brokersStore = new Map<string, any>();
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth.api.getSession({
@@ -23,7 +23,8 @@ export async function PUT(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const broker = brokersStore.get(params.id);
+    const { id } = await params;
+    const broker = brokersStore.get(id);
     if (!broker || broker.userId !== session.user.id) {
       return NextResponse.json({ error: 'Broker not found' }, { status: 404 });
     }
@@ -35,7 +36,7 @@ export async function PUT(
       updatedAt: new Date(),
     };
 
-    brokersStore.set(params.id, updated);
+    brokersStore.set(id, updated);
 
     return NextResponse.json(updated);
   } catch (error: any) {
@@ -53,7 +54,7 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth.api.getSession({
@@ -64,12 +65,13 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const broker = brokersStore.get(params.id);
+    const { id } = await params;
+    const broker = brokersStore.get(id);
     if (!broker || broker.userId !== session.user.id) {
       return NextResponse.json({ error: 'Broker not found' }, { status: 404 });
     }
 
-    brokersStore.delete(params.id);
+    brokersStore.delete(id);
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

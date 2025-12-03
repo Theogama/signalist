@@ -3,7 +3,8 @@
  * Provides Redis-backed session persistence with in-memory fallback
  */
 
-import { BotSession, BrokerType } from './SessionManager';
+import { BotSession } from './SessionManager';
+import { BrokerType } from '../types';
 import { IBrokerAdapter } from '../interfaces';
 
 // Try to import Redis, but don't fail if not available

@@ -78,9 +78,14 @@ export async function getUserAlertsWithStockData(): Promise<(AlertsListItem & { 
       })
     );
 
-    return enriched
-      .filter((result): result is PromiseFulfilledResult<AlertsListItem & { currentPrice?: number; changePercent?: number }> => result.status === 'fulfilled')
-      .map((result) => result.value);
+    const fulfilledResults = enriched.filter((result) => result.status === 'fulfilled');
+    return fulfilledResults.map((result) => {
+      if (result.status === 'fulfilled') {
+        return result.value;
+      }
+      // TypeScript guard - this should never execute
+      throw new Error('Unexpected rejected promise');
+    });
   } catch (error) {
     console.error('getUserAlertsWithStockData error:', error);
     return [];

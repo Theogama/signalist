@@ -22,9 +22,9 @@ export default function ExecuteBotButton({ signalId, isBotEnabled }: ExecuteBotB
 
   const handleExecute = async () => {
     if (!isBotEnabled) {
-      // Redirect to bot settings if not enabled
-      router.push('/settings/bot');
-      toast.info('Please enable auto-trading in bot settings first');
+      // Redirect to auto-trade page if not enabled
+      router.push('/autotrade');
+      toast.info('Please start auto-trading in Auto Trading page first');
       return;
     }
 

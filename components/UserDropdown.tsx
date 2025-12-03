@@ -11,7 +11,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {useRouter} from "next/navigation";
 import {Button} from "@/components/ui/button";
-import {LogOut, Settings, Bot} from "lucide-react";
+import {LogOut, Settings, Bot, User} from "lucide-react";
 import NavItems from "@/components/NavItems";
 import {signOut} from "@/lib/actions/auth.actions";
 import Link from "next/link";
@@ -60,15 +60,21 @@ const UserDropdown = ({ user, initialStocks }: {user: User, initialStocks: Stock
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator className="bg-gray-600"/>
                 <DropdownMenuItem asChild>
-                    <Link href="/settings/bot" className="text-gray-100 text-md font-medium focus:bg-transparent focus:text-yellow-500 transition-colors cursor-pointer flex items-center w-full">
-                        <Settings className="h-4 w-4 mr-2" />
-                        Bot Settings
+                    <Link href="/autotrade" className="text-gray-100 text-md font-medium focus:bg-transparent focus:text-yellow-500 transition-colors cursor-pointer flex items-center w-full">
+                        <Bot className="h-4 w-4 mr-2" />
+                        Auto Trading
                     </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                     <Link href="/dashboard/bot-trades" className="text-gray-100 text-md font-medium focus:bg-transparent focus:text-yellow-500 transition-colors cursor-pointer flex items-center w-full">
                         <Bot className="h-4 w-4 mr-2" />
                         Bot Trades
+                    </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                    <Link href="/settings/profile" className="text-gray-100 text-md font-medium focus:bg-transparent focus:text-yellow-500 transition-colors cursor-pointer flex items-center w-full">
+                        <User className="h-4 w-4 mr-2" />
+                        Profile Settings
                     </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>

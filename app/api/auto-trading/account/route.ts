@@ -32,11 +32,28 @@ export async function GET(request: NextRequest) {
     let balanceData = null;
 
     // Check if there's an active bot with PaperTrader for this broker
+    // Prioritize bot that matches the requested broker
     for (const bot of userBots) {
       if (bot.paperTrader && bot.isRunning) {
         // Get balance from PaperTrader (this recalculates equity with latest prices)
+        // PaperTrader recalculates equity on getBalance() call
         balanceData = bot.paperTrader.getBalance();
-        break;
+        // If broker matches, use this one; otherwise continue to find matching broker
+        if (bot.broker === brokerType || brokerType === 'demo') {
+          break;
+        }
+      }
+    }
+    
+    // If no running bot found, try to find any bot with PaperTrader (even if not running)
+    if (!balanceData) {
+      for (const bot of userBots) {
+        if (bot.paperTrader) {
+          balanceData = bot.paperTrader.getBalance();
+          if (bot.broker === brokerType || brokerType === 'demo') {
+            break;
+          }
+        }
       }
     }
 

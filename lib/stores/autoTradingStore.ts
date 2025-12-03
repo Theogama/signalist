@@ -4,7 +4,7 @@
  */
 
 import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
+import { devtools, persist } from 'zustand/middleware';
 
 // Helper function to safely parse JSON responses
 async function safeJsonParse<T = any>(response: Response): Promise<T> {
@@ -76,6 +76,10 @@ interface AutoTradingState {
   connectedBroker: BrokerType;
   brokerApiKey: string | null;
   brokerApiSecret: string | null;
+  // MT5 connection for Exness
+  mt5ConnectionId: string | null;
+  mt5Login: string | null;
+  mt5Server: string | null;
   isConnecting: boolean;
   connectionError: string | null;
 
@@ -108,7 +112,7 @@ interface AutoTradingState {
   wsError: string | null;
 
   // Actions
-  connectBroker: (broker: BrokerType, apiKey?: string, apiSecret?: string) => Promise<void>;
+  connectBroker: (broker: BrokerType, apiKey?: string, apiSecret?: string, mt5Login?: string, mt5Password?: string, mt5Server?: string) => Promise<void>;
   connectBrokerDemo: (broker: BrokerType) => Promise<void>;
   disconnectBroker: () => void;
   setSelectedInstrument: (instrument: Instrument) => void;
@@ -128,13 +132,32 @@ interface AutoTradingState {
   disconnectWebSocket: () => void;
 }
 
+// Persist only essential state (not sensitive data like API keys)
+const persistConfig = {
+  name: 'autotrading-storage',
+  partialize: (state: AutoTradingState) => ({
+    // Only persist non-sensitive state
+    connectedBroker: state.connectedBroker,
+    selectedInstrument: state.selectedInstrument,
+    selectedBot: state.selectedBot,
+    botParams: state.botParams,
+    botStatus: state.botStatus,
+    botStartTime: state.botStartTime,
+    // Don't persist: API keys, passwords, connection IDs, live data
+  }),
+};
+
 export const useAutoTradingStore = create<AutoTradingState>()(
   devtools(
-    (set, get) => ({
+    persist(
+      (set, get) => ({
       // Initial state
       connectedBroker: null,
       brokerApiKey: null,
       brokerApiSecret: null,
+      mt5ConnectionId: null,
+      mt5Login: null,
+      mt5Server: null,
       isConnecting: false,
       connectionError: null,
 
@@ -160,15 +183,35 @@ export const useAutoTradingStore = create<AutoTradingState>()(
       wsConnected: false,
       wsError: null,
 
-      // Connect broker (with optional API keys for live trading)
-      connectBroker: async (broker, apiKey, apiSecret) => {
+      // Connect broker (with optional API keys for live trading, or MT5 credentials for Exness)
+      connectBroker: async (broker, apiKey, apiSecret, mt5Login, mt5Password, mt5Server) => {
         set({ isConnecting: true, connectionError: null });
 
         try {
+          // Prepare request body based on broker type
+          const requestBody: any = { broker };
+          
+          if (broker === 'exness') {
+            // Exness uses MT5 credentials
+            if (mt5Login && mt5Password && mt5Server) {
+              requestBody.login = mt5Login;
+              requestBody.password = mt5Password;
+              requestBody.server = mt5Server;
+              requestBody.demo = mt5Server === 'Exness-MT5Trial';
+            } else {
+              requestBody.demo = true;
+            }
+          } else if (broker === 'deriv') {
+            // Deriv uses API keys
+            requestBody.apiKey = apiKey || '';
+            requestBody.apiSecret = apiSecret || '';
+            requestBody.demo = !apiKey || !apiSecret;
+          }
+
           const response = await fetch('/api/auto-trading/connect-broker', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ broker, apiKey, apiSecret, demo: !apiKey || !apiSecret }),
+            body: JSON.stringify(requestBody),
           });
 
           if (!response.ok) {
@@ -182,7 +225,10 @@ export const useAutoTradingStore = create<AutoTradingState>()(
             throw new Error(data.error || 'Failed to connect broker');
           }
 
-          // Fetch demo account balance
+          // Extract connection ID from response if available (for MT5)
+          const connectionId = data.data?.connectionId || null;
+          
+          // Fetch account balance
           try {
             const accountResponse = await fetch(`/api/auto-trading/account?broker=${broker}`);
             if (accountResponse.ok) {
@@ -190,8 +236,11 @@ export const useAutoTradingStore = create<AutoTradingState>()(
               if (accountData.success && accountData.data) {
                 set({
                   connectedBroker: broker,
-                  brokerApiKey: apiKey || null,
-                  brokerApiSecret: apiSecret || null,
+                  brokerApiKey: broker === 'deriv' ? (apiKey || null) : null,
+                  brokerApiSecret: broker === 'deriv' ? (apiSecret || null) : null,
+                  mt5ConnectionId: broker === 'exness' ? connectionId : null,
+                  mt5Login: broker === 'exness' ? (mt5Login || null) : null,
+                  mt5Server: broker === 'exness' ? (mt5Server || null) : null,
                   isConnecting: false,
                   connectionError: null,
                   balance: accountData.data.balance || 10000,
@@ -201,8 +250,11 @@ export const useAutoTradingStore = create<AutoTradingState>()(
               } else {
                 set({
                   connectedBroker: broker,
-                  brokerApiKey: apiKey || null,
-                  brokerApiSecret: apiSecret || null,
+                  brokerApiKey: broker === 'deriv' ? (apiKey || null) : null,
+                  brokerApiSecret: broker === 'deriv' ? (apiSecret || null) : null,
+                  mt5ConnectionId: broker === 'exness' ? connectionId : null,
+                  mt5Login: broker === 'exness' ? (mt5Login || null) : null,
+                  mt5Server: broker === 'exness' ? (mt5Server || null) : null,
                   isConnecting: false,
                   connectionError: null,
                   balance: 10000, // Default demo balance
@@ -213,8 +265,11 @@ export const useAutoTradingStore = create<AutoTradingState>()(
             } else {
               set({
                 connectedBroker: broker,
-                brokerApiKey: apiKey || null,
-                brokerApiSecret: apiSecret || null,
+                brokerApiKey: broker === 'deriv' ? (apiKey || null) : null,
+                brokerApiSecret: broker === 'deriv' ? (apiSecret || null) : null,
+                mt5ConnectionId: broker === 'exness' ? connectionId : null,
+                mt5Login: broker === 'exness' ? (mt5Login || null) : null,
+                mt5Server: broker === 'exness' ? (mt5Server || null) : null,
                 isConnecting: false,
                 connectionError: null,
                 balance: 10000, // Default demo balance
@@ -226,8 +281,11 @@ export const useAutoTradingStore = create<AutoTradingState>()(
             // Fallback to default balance
             set({
               connectedBroker: broker,
-              brokerApiKey: apiKey || null,
-              brokerApiSecret: apiSecret || null,
+              brokerApiKey: broker === 'deriv' ? (apiKey || null) : null,
+              brokerApiSecret: broker === 'deriv' ? (apiSecret || null) : null,
+              mt5ConnectionId: broker === 'exness' ? connectionId : null,
+              mt5Login: broker === 'exness' ? (mt5Login || null) : null,
+              mt5Server: broker === 'exness' ? (mt5Server || null) : null,
               isConnecting: false,
               connectionError: null,
               balance: 10000, // Default demo balance
@@ -258,6 +316,9 @@ export const useAutoTradingStore = create<AutoTradingState>()(
           connectedBroker: null,
           brokerApiKey: null,
           brokerApiSecret: null,
+          mt5ConnectionId: null,
+          mt5Login: null,
+          mt5Server: null,
           selectedInstrument: null,
           availableInstruments: [],
           botStatus: 'idle',
@@ -289,20 +350,22 @@ export const useAutoTradingStore = create<AutoTradingState>()(
       startBot: async () => {
         const { selectedBot, botParams, selectedInstrument, connectedBroker } = get();
 
-        if (!selectedBot || !botParams || !selectedInstrument) {
-          throw new Error('Bot, parameters, and instrument must be selected');
+        if (!selectedBot || !botParams || !selectedInstrument || !connectedBroker) {
+          throw new Error('Bot, parameters, instrument, and broker must be selected');
         }
 
         set({ botStatus: 'running', botStartTime: new Date() });
 
         try {
-          const response = await fetch('/api/auto-trading/start-bot', {
+          // Use new unified start API endpoint
+          const response = await fetch('/api/auto-trading/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               botId: selectedBot.id,
+              botName: selectedBot.name, // Include bot name for strategy mapping
               instrument: selectedInstrument.symbol,
-              parameters: botParams,
+              settings: botParams, // Use 'settings' instead of 'parameters'
               broker: connectedBroker,
             }),
           });
@@ -315,7 +378,7 @@ export const useAutoTradingStore = create<AutoTradingState>()(
           const data = await safeJsonParse<ApiResponse>(response);
 
           if (!data.success) {
-            throw new Error(data.error || 'Failed to start bot');
+            throw new Error(data.error || 'Failed to start auto-trade');
           }
 
           // WebSocket connection is handled by useWebSocket hook
@@ -331,11 +394,22 @@ export const useAutoTradingStore = create<AutoTradingState>()(
 
       // Stop bot
       stopBot: async () => {
+        const { selectedBot } = get();
+        
+        if (!selectedBot) {
+          throw new Error('No bot selected');
+        }
+
         set({ botStatus: 'stopping' });
 
         try {
-          const response = await fetch('/api/auto-trading/stop-bot', {
+          // Use new unified stop API endpoint
+          const response = await fetch('/api/auto-trading/stop', {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              botId: selectedBot.id,
+            }),
           });
 
           if (!response.ok) {
@@ -346,7 +420,7 @@ export const useAutoTradingStore = create<AutoTradingState>()(
           const data = await safeJsonParse<ApiResponse>(response);
 
           if (!data.success) {
-            throw new Error(data.error || 'Failed to stop bot');
+            throw new Error(data.error || 'Failed to stop auto-trade');
           }
 
           set({
@@ -551,7 +625,9 @@ export const useAutoTradingStore = create<AutoTradingState>()(
       disconnectWebSocket: () => {
         set({ wsConnected: false });
       },
-    }),
+      }),
+      persistConfig
+    ),
     { name: 'AutoTradingStore' }
   )
 );

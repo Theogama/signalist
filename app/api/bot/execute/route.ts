@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/better-auth/auth';
 import { headers } from 'next/headers';
 import { executeBotTradeLogic } from '@/lib/services/bot-execution.service';
+import { randomUUID } from 'crypto';
 
 // TODO: Import exchange SDKs when implementing multi-exchange support
 // import Binance from 'binance-api-node';
@@ -119,37 +120,39 @@ async function placeExchangeOrder(
 
 /**
  * Fetch signal details from database
+ * NOTE: This function is not currently used as executeBotTradeLogic handles signal fetching
+ * Keeping it for potential future use
  */
-async function getSignalDetails(signalId: string): Promise<{
-  ticker: string;
-  action: 'BUY' | 'SELL';
-  price: number;
-}> {
-  await connectToDatabase();
-  
-  const signal = await Signal.findOne({ signalId }).lean();
-  
-  if (!signal) {
-    throw new Error('Signal not found');
-  }
-  
-  if (signal.status !== 'active') {
-    throw new Error(`Signal is ${signal.status} and cannot be executed`);
-  }
-  
-  // Check if signal has expired
-  if (signal.expiresAt && new Date(signal.expiresAt) < new Date()) {
-    // Update signal status to expired
-    await Signal.findOneAndUpdate({ signalId }, { status: 'expired', updatedAt: new Date() });
-    throw new Error('Signal has expired');
-  }
-  
-  return {
-    ticker: signal.ticker || signal.symbol,
-    action: signal.action,
-    price: signal.price,
-  };
-}
+// async function getSignalDetails(signalId: string): Promise<{
+//   ticker: string;
+//   action: 'BUY' | 'SELL';
+//   price: number;
+// }> {
+//   await connectToDatabase();
+//   
+//   const signal = await Signal.findOne({ signalId }).lean();
+//   
+//   if (!signal) {
+//     throw new Error('Signal not found');
+//   }
+//   
+//   if (signal.status !== 'active') {
+//     throw new Error(`Signal is ${signal.status} and cannot be executed`);
+//   }
+//   
+//   // Check if signal has expired
+//   if (signal.expiresAt && new Date(signal.expiresAt) < new Date()) {
+//     // Update signal status to expired
+//     await Signal.findOneAndUpdate({ signalId }, { status: 'expired', updatedAt: new Date() });
+//     throw new Error('Signal has expired');
+//   }
+//   
+//   return {
+//     ticker: signal.ticker || signal.symbol,
+//     action: signal.action,
+//     price: signal.price,
+//   };
+// }
 
 /**
  * POST /api/bot/execute

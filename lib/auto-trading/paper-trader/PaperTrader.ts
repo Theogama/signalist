@@ -6,6 +6,7 @@
 import { IPaperTrader } from '../interfaces';
 import { StrategySignal, MarketData, OrderRequest, OrderResponse, AccountBalance, TradeResult, OrderStatus } from '../types';
 import { DemoAccount } from '@/database/models/demo-account.model';
+import { SignalistBotTrade } from '@/database/models/signalist-bot-trade.model';
 import { connectToDatabase } from '@/database/mongoose';
 
 export class PaperTrader implements IPaperTrader {
@@ -97,7 +98,7 @@ export class PaperTrader implements IPaperTrader {
       takeProfit: signal.takeProfit,
     };
 
-    const response = this.simulateFill(orderRequest, marketData);
+    const response = await this.simulateFill(orderRequest, marketData);
     
     // Recalculate equity after opening position
     this.recalculateEquity();
@@ -108,7 +109,7 @@ export class PaperTrader implements IPaperTrader {
     return response;
   }
 
-  simulateFill(order: OrderRequest, marketData: MarketData): OrderResponse {
+  async simulateFill(order: OrderRequest, marketData: MarketData): Promise<OrderResponse> {
     // Simulate order fill with slight slippage
     const slippage = 0.0001; // 0.01% slippage
     const filledPrice = order.type === 'MARKET'
@@ -144,6 +145,7 @@ export class PaperTrader implements IPaperTrader {
     }
 
     // Record position
+    const entryTime = new Date();
     this.openPositions.set(tradeId, {
       signal: {
         symbol: order.symbol,
@@ -152,13 +154,35 @@ export class PaperTrader implements IPaperTrader {
         stopLoss: order.stopLoss,
         takeProfit: order.takeProfit,
         quantity: order.quantity,
-        timestamp: new Date(),
+        timestamp: entryTime,
       },
       entryPrice: filledPrice,
-      entryTime: new Date(),
+      entryTime: entryTime,
       quantity: order.quantity,
       currentPrice: filledPrice,
     });
+
+    // Save trade to database (OPEN status)
+    try {
+      await connectToDatabase();
+      await SignalistBotTrade.create({
+        tradeId,
+        userId: this.userId,
+        broker: this.broker === 'demo' ? 'deriv' : this.broker, // Map demo to deriv for database
+        symbol: order.symbol,
+        side: order.side,
+        entryPrice: filledPrice,
+        lotOrStake: order.quantity,
+        stopLoss: order.stopLoss || filledPrice * 0.99,
+        takeProfit: order.takeProfit || filledPrice * 1.01,
+        status: 'OPEN',
+        entryTimestamp: entryTime,
+        entryReason: 'Strategy signal',
+      });
+    } catch (error) {
+      console.error('Error saving trade to database:', error);
+      // Continue even if database save fails
+    }
 
     // Update margin (lock margin for this position)
     this.margin += marginRequirement;
@@ -302,6 +326,32 @@ export class PaperTrader implements IPaperTrader {
 
     this.trades.push(trade);
     this.openPositions.delete(tradeId);
+
+    // Map reason to database status
+    const dbStatus = reason === 'TAKE_PROFIT' ? 'TP_HIT' : 
+                     reason === 'STOPPED' ? 'SL_HIT' : 
+                     'CLOSED';
+
+    // Update trade in database (close the trade)
+    try {
+      await connectToDatabase();
+      await SignalistBotTrade.findOneAndUpdate(
+        { tradeId },
+        {
+          status: dbStatus,
+          exitPrice,
+          exitTimestamp: new Date(),
+          realizedPnl: pnl,
+          realizedPnlPercent: pnlPercent,
+          exitReason: reason === 'TAKE_PROFIT' ? 'Take Profit Hit' : 
+                      reason === 'STOPPED' ? 'Stop Loss Hit' : 
+                      'Position Closed',
+        }
+      );
+    } catch (error) {
+      console.error('Error updating trade in database:', error);
+      // Continue even if database update fails
+    }
 
     // Update account statistics in database
     if (this.accountId) {

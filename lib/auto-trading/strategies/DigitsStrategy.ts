@@ -4,7 +4,7 @@
  */
 
 import { BaseStrategy } from './BaseStrategy';
-import { StrategySignal, MarketData } from '../types';
+import { StrategySignal, MarketData, Position } from '../types';
 
 export class DigitsStrategy extends BaseStrategy {
   private lookbackPeriod: number = 10;

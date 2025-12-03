@@ -3,7 +3,8 @@
  * Retry logic, order confirmation, slippage reduction, latency protection
  */
 
-import { OrderRequest, OrderResponse, OrderStatus, IBrokerAdapter } from '../types';
+import { OrderRequest, OrderResponse, OrderStatus } from '../types';
+import { IBrokerAdapter } from '../interfaces';
 
 export interface ExecutionConfig {
   maxRetries?: number;

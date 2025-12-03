@@ -123,7 +123,7 @@ export async function updateBotSettings(input: {
       { upsert: true, new: true, runValidators: true }
     );
 
-    revalidatePath('/settings/bot');
+    revalidatePath('/autotrade');
     return { success: true };
   } catch (error: any) {
     console.error('updateBotSettings error:', error);

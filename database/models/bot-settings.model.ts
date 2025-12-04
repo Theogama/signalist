@@ -43,4 +43,10 @@ export const UserBotSettings: Model<UserBotSettingsDoc> =
   (models?.UserBotSettings as Model<UserBotSettingsDoc>) ||
   model<UserBotSettingsDoc>('UserBotSettings', UserBotSettingsSchema);
 
+// Alias export for backward compatibility
+export const BotSettings = UserBotSettings;
+
+// Default export for backward compatibility (some files may import as default)
+export default UserBotSettings;
+
 

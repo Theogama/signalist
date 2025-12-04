@@ -169,3 +169,4 @@ export class SignalistBotManager extends EventEmitter {
 // Singleton instance
 export const botManager = new SignalistBotManager();
 
+

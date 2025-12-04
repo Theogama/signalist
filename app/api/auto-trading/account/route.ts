@@ -11,6 +11,9 @@ import { DemoAccount } from '@/database/models/demo-account.model';
 import { connectToDatabase } from '@/database/mongoose';
 import { PaperTrader } from '@/lib/auto-trading/paper-trader/PaperTrader';
 import { botManager } from '@/lib/services/bot-manager.service';
+import { sessionManager } from '@/lib/auto-trading/session-manager/SessionManager';
+
+const MT5_SERVICE_URL = process.env.MT5_SERVICE_URL || 'http://localhost:5000';
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,6 +30,89 @@ export async function GET(request: NextRequest) {
     const broker = request.nextUrl.searchParams.get('broker') || 'demo';
     const brokerType = broker as 'exness' | 'deriv' | 'demo';
 
+    // For Deriv, check if there's an adapter connection
+    if (brokerType === 'deriv') {
+      const adapter = sessionManager.getUserAdapter(session.user.id, 'deriv');
+      
+      if (adapter) {
+        try {
+          // Try to get balance from adapter
+          const balance = await adapter.getBalance();
+          
+          // Get account stats from database
+          const account = await DemoAccount.findOne({ 
+            userId: session.user.id, 
+            broker: brokerType 
+          });
+
+          return NextResponse.json({
+            success: true,
+            data: {
+              balance: balance.balance,
+              equity: balance.equity,
+              margin: balance.margin,
+              freeMargin: balance.freeMargin,
+              currency: balance.currency || 'USD',
+              marginLevel: balance.marginLevel || 0,
+              initialBalance: account?.initialBalance || 10000,
+              totalProfitLoss: account?.totalProfitLoss || 0,
+              totalTrades: account?.totalTrades || 0,
+              winningTrades: account?.winningTrades || 0,
+              losingTrades: account?.losingTrades || 0,
+            },
+          });
+        } catch (error: any) {
+          console.error('Error fetching Deriv account from adapter:', error);
+          // Fall through to PaperTrader/database fallback
+        }
+      }
+      // If no adapter or error, fall through to PaperTrader/database logic below
+    }
+
+    // For Exness, check if there's an MT5 connection
+    if (brokerType === 'exness') {
+      const adapter = sessionManager.getUserAdapter(session.user.id, 'exness');
+      
+      if (adapter && (adapter as any).connectionId) {
+        // Fetch from MT5 service
+        try {
+          const mt5Response = await fetch(
+            `${MT5_SERVICE_URL}/account?connection_id=${(adapter as any).connectionId}`
+          );
+          
+          if (mt5Response.ok) {
+            const mt5Data = await mt5Response.json();
+            if (mt5Data.success && mt5Data.account) {
+              return NextResponse.json({
+                success: true,
+                data: {
+                  balance: mt5Data.account.balance || 0,
+                  equity: mt5Data.account.equity || 0,
+                  margin: mt5Data.account.margin || 0,
+                  freeMargin: mt5Data.account.free_margin || 0,
+                  currency: mt5Data.account.currency || 'USD',
+                  marginLevel: mt5Data.account.margin_level || 0,
+                },
+              });
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching MT5 account:', error);
+          return NextResponse.json(
+            { success: false, error: 'Failed to fetch Exness account. Please ensure you are connected with valid MT5 credentials.' },
+            { status: 500 }
+          );
+        }
+      } else {
+        // No MT5 connection found
+        return NextResponse.json(
+          { success: false, error: 'Exness requires MT5 connection. Please connect with your MT5 login credentials.' },
+          { status: 400 }
+        );
+      }
+    }
+
+    // For Deriv and demo, use PaperTrader or database
     // Try to get balance from active PaperTrader (if bot is running)
     const userBots = botManager.getUserBots(session.user.id);
     let balanceData = null;
@@ -59,35 +145,114 @@ export async function GET(request: NextRequest) {
 
     // If no active PaperTrader, try to get from database or create new PaperTrader instance
     if (!balanceData) {
-      const account = await DemoAccount.findOne({ 
-        userId: session.user.id, 
-        broker: brokerType 
-      });
+      try {
+        const account = await DemoAccount.findOne({ 
+          userId: session.user.id, 
+          broker: brokerType 
+        });
 
-      if (account) {
-        // Create PaperTrader instance to get properly calculated balance
-        const trader = new PaperTrader(session.user.id, brokerType, account.initialBalance);
-        await trader.initialize();
-        balanceData = trader.getBalance();
-      } else {
-        // Create default account if doesn't exist
-        const newAccount = await DemoAccount.create({
-          userId: session.user.id,
-          broker: brokerType,
+        if (account) {
+          // Create PaperTrader instance to get properly calculated balance
+          try {
+            const trader = new PaperTrader(session.user.id, brokerType, account.initialBalance);
+            await trader.initialize();
+            balanceData = trader.getBalance();
+          } catch (traderError) {
+            console.error('Error initializing PaperTrader:', traderError);
+            // Fallback to database values
+            balanceData = {
+              balance: account.balance,
+              equity: account.equity,
+              margin: account.margin,
+              freeMargin: account.freeMargin,
+              currency: account.currency || 'USD',
+            };
+          }
+        } else {
+          // Create default account if doesn't exist (use upsert to handle duplicates)
+          try {
+            const newAccount = await DemoAccount.findOneAndUpdate(
+              { userId: session.user.id, broker: brokerType },
+              {
+                $setOnInsert: {
+                  balance: 10000,
+                  equity: 10000,
+                  margin: 0,
+                  freeMargin: 10000,
+                  initialBalance: 10000,
+                  currency: 'USD',
+                  totalProfitLoss: 0,
+                  totalTrades: 0,
+                  winningTrades: 0,
+                  losingTrades: 0,
+                },
+              },
+              {
+                upsert: true,
+                new: true,
+                setDefaultsOnInsert: true,
+              }
+            );
+
+            balanceData = {
+              balance: newAccount.balance,
+              equity: newAccount.equity,
+              margin: newAccount.margin,
+              freeMargin: newAccount.freeMargin,
+              currency: newAccount.currency,
+            };
+          } catch (createError: any) {
+            // Handle duplicate key error - account already exists, just load it
+            if (createError.code === 11000 || createError.message?.includes('duplicate key')) {
+              try {
+                const existingAccount = await DemoAccount.findOne({ 
+                  userId: session.user.id, 
+                  broker: brokerType 
+                });
+                if (existingAccount) {
+                  balanceData = {
+                    balance: existingAccount.balance,
+                    equity: existingAccount.equity,
+                    margin: existingAccount.margin,
+                    freeMargin: existingAccount.freeMargin,
+                    currency: existingAccount.currency,
+                  };
+                } else {
+                  throw createError; // Re-throw if we can't find it
+                }
+              } catch (loadError) {
+                console.error('Error loading existing account after duplicate key error:', loadError);
+                // Fallback to default values
+                balanceData = {
+                  balance: 10000,
+                  equity: 10000,
+                  margin: 0,
+                  freeMargin: 10000,
+                  currency: 'USD',
+                };
+              }
+            } else {
+              console.error('Error creating demo account:', createError);
+              // Fallback to default values
+              balanceData = {
+                balance: 10000,
+                equity: 10000,
+                margin: 0,
+                freeMargin: 10000,
+                currency: 'USD',
+              };
+            }
+          }
+        }
+      } catch (dbError) {
+        console.error('Database error in account API:', dbError);
+        // Fallback to default values if database fails
+        balanceData = {
           balance: 10000,
           equity: 10000,
           margin: 0,
           freeMargin: 10000,
-          initialBalance: 10000,
           currency: 'USD',
-        });
-
-        balanceData = {
-          balance: newAccount.balance,
-          equity: newAccount.equity,
-          margin: newAccount.margin,
-          freeMargin: newAccount.freeMargin,
-          currency: newAccount.currency,
         };
       }
     }

@@ -69,10 +69,23 @@ export class StrategyRegistry {
       // Dynamic import of generated strategies
       // This allows loading strategies converted from XML
       // Use try-catch to handle missing generated folder gracefully
-      const generatedIndex = await import('./generated/index').catch(() => null);
+      let generatedIndex: any = null;
       
-      if (!generatedIndex) {
-        console.warn('Generated strategies not found. Run convert-xml-bots.ts first.');
+      try {
+        // Use dynamic import with explicit path to avoid webpack issues
+        generatedIndex = await import('./generated/index');
+      } catch (importError: any) {
+        // Module not found or empty - this is expected if no XML bots have been converted
+        if (importError?.code === 'MODULE_NOT_FOUND' || importError?.message?.includes('Cannot resolve')) {
+          console.warn('Generated strategies not found. Run convert-xml-bots.ts first.');
+          return;
+        }
+        // Re-throw other errors
+        throw importError;
+      }
+      
+      if (!generatedIndex || Object.keys(generatedIndex).length === 0) {
+        console.warn('Generated strategies index is empty. Run convert-xml-bots.ts first.');
         return;
       }
       
@@ -83,9 +96,9 @@ export class StrategyRegistry {
           this.register(strategyName, (config) => new (StrategyClass as any)(config));
         }
       }
-    } catch (error) {
+    } catch (error: any) {
       // Generated strategies not available yet
-      console.warn('Generated strategies not found. Run convert-xml-bots.ts first.');
+      console.warn('Generated strategies not found. Run convert-xml-bots.ts first.', error?.message || error);
     }
   }
 }

@@ -51,7 +51,16 @@ export default function StartStopControls() {
 
   const getUptime = () => {
     if (!botStartTime) return '0s';
-    const seconds = Math.floor((Date.now() - botStartTime.getTime()) / 1000);
+    
+    // Handle both Date objects and string dates (from localStorage)
+    const startTime = botStartTime instanceof Date 
+      ? botStartTime 
+      : new Date(botStartTime);
+    
+    // Check if date is valid
+    if (isNaN(startTime.getTime())) return '0s';
+    
+    const seconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
     const minutes = Math.floor(seconds / 60);
     const hours = Math.floor(minutes / 60);
     

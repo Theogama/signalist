@@ -181,17 +181,25 @@ class BotManagerService {
     const bot = this.activeBots.get(botKey);
 
     if (!bot) {
+      // Log available bots for debugging
+      const userBots = this.getUserBots(userId);
+      console.warn(`[BotManager] Bot not found: ${botKey}. Available bots for user:`, 
+        userBots.map(b => `${b.userId}-${b.botId}`)
+      );
       return false;
     }
 
     if (bot.intervalId) {
       clearInterval(bot.intervalId);
+      bot.intervalId = undefined;
     }
 
     bot.isRunning = false;
     
     // Stop session
-    sessionManager.stopSession(bot.sessionId);
+    if (bot.sessionId) {
+      sessionManager.stopSession(bot.sessionId);
+    }
     
     // Log bot stop
     logEmitter.info(

@@ -33,8 +33,9 @@ export async function POST(request: NextRequest) {
 
     const userId = session.user.id;
 
-    // Exness MUST use MT5 connection
+    // Exness connection - REQUIRES MT5 credentials (no demo mode)
     if (broker === 'exness') {
+      // Exness MUST have MT5 credentials
       if (!login || !password || !server) {
         return NextResponse.json(
           { success: false, error: 'Exness requires MT5 connection. Please provide login, password, and server.' },
@@ -111,6 +112,7 @@ export async function POST(request: NextRequest) {
             balance,
             instruments: ['XAUUSD', 'US30', 'NAS100'],
             connectionId: mt5Data.connection_id,
+            connection_id: mt5Data.connection_id, // Also include for compatibility
             connectedAt: new Date().toISOString(),
           },
         });
@@ -150,6 +152,15 @@ export async function POST(request: NextRequest) {
 
         // Store adapter in session manager
         sessionManager.setUserAdapter(userId, 'deriv', adapter);
+        console.log(`[Connect Broker] Stored Deriv adapter for userId: ${userId}, isDemo: ${isDemo}, paperTrading: ${adapter.isPaperTrading()}`);
+        
+        // Verify adapter was stored
+        const storedAdapter = sessionManager.getUserAdapter(userId, 'deriv');
+        if (!storedAdapter) {
+          console.error(`[Connect Broker] WARNING: Adapter was not stored correctly for userId: ${userId}`);
+        } else {
+          console.log(`[Connect Broker] Verified adapter stored successfully`);
+        }
 
         // Get account balance
         let balance;

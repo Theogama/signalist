@@ -17,7 +17,9 @@ import {
   AlertCircle,
   Play,
   Square,
-  Settings
+  Settings,
+  X,
+  CheckCircle2
 } from 'lucide-react';
 import BrokerConnectionModal from './BrokerConnectionModal';
 import InstrumentsSelector from './InstrumentsSelector';
@@ -37,6 +39,7 @@ import BotDiagnosticsPanel from './BotDiagnosticsPanel';
 import { useWebSocket } from '@/lib/hooks/useWebSocket';
 import { useStateRestoration } from '@/lib/hooks/useStateRestoration';
 import { useAutoTradingStore as useStore } from '@/lib/stores/autoTradingStore';
+import { toast } from 'sonner';
 
 export default function AutoTradingDashboard() {
   // Restore state on page load
@@ -56,11 +59,14 @@ export default function AutoTradingDashboard() {
     loadInstruments,
     setBalance,
     addLog,
+    disconnectBroker,
   } = useAutoTradingStore();
 
   useEffect(() => {
     loadBots();
-    
+  }, []); // Only run once on mount
+
+  useEffect(() => {
     // Show restoration status
     if (isRestoring) {
       addLog({
@@ -68,7 +74,7 @@ export default function AutoTradingDashboard() {
         message: 'Restoring connection state...',
       });
     }
-  }, [isRestoring, loadBots, addLog]); // Only run once on mount
+  }, [isRestoring, addLog]);
 
   useEffect(() => {
     if (connectedBroker) {
@@ -102,8 +108,8 @@ export default function AutoTradingDashboard() {
     // Fetch immediately
     fetchAccountBalance();
 
-    // Then poll every 5 seconds
-    const interval = setInterval(fetchAccountBalance, 5000);
+    // Then poll every 10 seconds (reduced from 5s for better performance)
+    const interval = setInterval(fetchAccountBalance, 10000);
     return () => clearInterval(interval);
   }, [connectedBroker, setBalance]);
 
@@ -163,8 +169,8 @@ export default function AutoTradingDashboard() {
     // Fetch immediately
     fetchPositions();
 
-    // Then poll every 3 seconds
-    const interval = setInterval(fetchPositions, 3000);
+    // Then poll every 5 seconds (reduced from 3s for better performance)
+    const interval = setInterval(fetchPositions, 5000);
     return () => clearInterval(interval);
   }, [botStatus, setBalance]);
 
@@ -197,17 +203,46 @@ export default function AutoTradingDashboard() {
         </Card>
       )}
 
-      {/* Demo Mode Indicator */}
+      {/* Broker Connection Status with Disconnect Toggle */}
       {connectedBroker && (
-        <Card className="mb-6 border-blue-500/50 bg-blue-500/10">
+        <Card className="mb-6 border-green-500/50 bg-green-500/10">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-blue-400 text-sm">
-              <Activity className="h-4 w-4" />
-              Demo Mode Active
-            </CardTitle>
-            <CardDescription className="text-gray-400 text-xs">
-              You're trading with virtual funds. All instruments are automatically available. Perfect for testing strategies!
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <CardTitle className="flex items-center gap-2 text-green-400 text-sm mb-1">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Connected to {connectedBroker.toUpperCase()}
+                </CardTitle>
+                <CardDescription className="text-gray-400 text-xs">
+                  You're trading with virtual funds. All instruments are automatically available. Perfect for testing strategies!
+                </CardDescription>
+              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    await disconnectBroker();
+                    toast.success(`Disconnected from ${connectedBroker.toUpperCase()}`);
+                    addLog({
+                      level: 'success',
+                      message: `Disconnected from ${connectedBroker.toUpperCase()}`,
+                    });
+                  } catch (error: any) {
+                    toast.error(`Failed to disconnect: ${error.message}`);
+                    addLog({
+                      level: 'error',
+                      message: `Failed to disconnect: ${error.message}`,
+                    });
+                  }
+                }}
+                className="ml-4"
+              >
+                <X className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">Disconnect</span>
+                <span className="sm:hidden">X</span>
+              </Button>
+            </div>
           </CardHeader>
         </Card>
       )}

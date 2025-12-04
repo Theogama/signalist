@@ -36,20 +36,33 @@ export class PaperTrader implements IPaperTrader {
     try {
       await connectToDatabase();
       
-      let account = await DemoAccount.findOne({ userId: this.userId, broker: this.broker });
+      // Use findOneAndUpdate with upsert to handle race conditions and duplicates
+      const account = await DemoAccount.findOneAndUpdate(
+        { userId: this.userId, broker: this.broker },
+        {
+          // Only set these if creating new account (upsert)
+          $setOnInsert: {
+            balance: this.initialBalance,
+            equity: this.initialBalance,
+            margin: 0,
+            freeMargin: this.initialBalance,
+            initialBalance: this.initialBalance,
+            currency: 'USD',
+            totalProfitLoss: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        }
+      );
       
       if (!account) {
-        // Create new demo account
-        account = await DemoAccount.create({
-          userId: this.userId,
-          broker: this.broker,
-          balance: this.initialBalance,
-          equity: this.initialBalance,
-          margin: 0,
-          freeMargin: this.initialBalance,
-          initialBalance: this.initialBalance,
-          currency: 'USD',
-        });
+        throw new Error('Failed to create or retrieve demo account');
       }
       
       this.accountId = (account._id as any)?.toString() || account._id?.toString() || null;
@@ -57,9 +70,29 @@ export class PaperTrader implements IPaperTrader {
       this.equity = account.equity;
       this.margin = account.margin;
       this.initialBalance = account.initialBalance;
-    } catch (error) {
+    } catch (error: any) {
+      // Handle duplicate key error gracefully
+      if (error.code === 11000 || error.message?.includes('duplicate key')) {
+        console.log(`[PaperTrader] Account already exists for userId: ${this.userId}, broker: ${this.broker}, loading existing account...`);
+        try {
+          // Account already exists, just load it
+          const existingAccount = await DemoAccount.findOne({ userId: this.userId, broker: this.broker });
+          if (existingAccount) {
+            this.accountId = (existingAccount._id as any)?.toString() || existingAccount._id?.toString() || null;
+            this.balance = existingAccount.balance;
+            this.equity = existingAccount.equity;
+            this.margin = existingAccount.margin;
+            this.initialBalance = existingAccount.initialBalance;
+            return; // Successfully loaded existing account
+          }
+        } catch (loadError) {
+          console.error('Error loading existing account:', loadError);
+        }
+      }
+      
       console.error('Error initializing demo account:', error);
       // Fallback to in-memory if DB fails
+      // Keep the initial balance values already set in constructor
     }
   }
 

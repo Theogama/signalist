@@ -5,8 +5,8 @@
  * Displays comprehensive persistent trading statistics from database
  */
 
-import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useStatistics } from '@/lib/hooks/useStatistics';
 import { Badge } from '@/components/ui/badge';
 import { 
   TrendingUp, 
@@ -58,34 +58,7 @@ interface TradingStatistics {
 }
 
 export default function TradingStatisticsPanel() {
-  const [stats, setStats] = useState<TradingStatistics | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch('/api/auto-trading/statistics');
-        const data = await response.json();
-        
-        if (data.success) {
-          setStats(data.data);
-        } else {
-          setError(data.error || 'Failed to load statistics');
-        }
-      } catch (err: any) {
-        setError(err.message || 'Failed to fetch statistics');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchStats();
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchStats, 30000);
-    return () => clearInterval(interval);
-  }, []);
+  const { stats, loading, error } = useStatistics({ refreshInterval: 30000 });
 
   if (loading) {
     return (
@@ -330,4 +303,5 @@ export default function TradingStatisticsPanel() {
     </div>
   );
 }
+
 

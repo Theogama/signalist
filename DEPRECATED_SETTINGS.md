@@ -110,3 +110,4 @@ For now, **keep the old settings model** but:
 ⏸️ **Old settings system is deprecated but still present**
 📋 **Migration path is documented**
 
+

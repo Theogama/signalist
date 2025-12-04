@@ -8,7 +8,7 @@ import { auth } from '@/lib/better-auth/auth';
 import { headers } from 'next/headers';
 import { sessionManager } from '@/lib/auto-trading/session-manager/SessionManager';
 import { botManager } from '@/lib/services/bot-manager.service';
-import { BotTrade } from '@/database/models/bot-trade.model';
+import { SignalistBotTrade } from '@/database/models/signalist-bot-trade.model';
 import { connectToDatabase } from '@/database/mongoose';
 
 export async function GET(request: NextRequest) {
@@ -41,100 +41,129 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get balance and positions from adapter or paper trader
-    let balance;
-    let openPositions = [];
+    await connectToDatabase();
+
+    // Get active bots for this user
+    const activeBots = botManager.getUserBots(userId);
+    
+    // Get balance and positions from paper trader (prioritize active bot's paper trader)
+    let balance: any = null;
     let currentRunningPL = 0;
+    let openPositionsCount = 0;
 
     // Check if using paper trader (from active bots)
-    const activeBots = botManager.getUserBots(userId);
-    let paperTraderBalance: any = null;
-
     for (const bot of activeBots) {
-      if (bot.paperTrader) {
+      if (bot.paperTrader && bot.broker === broker) {
         const ptBalance = bot.paperTrader.getBalance();
-        paperTraderBalance = ptBalance;
+        balance = ptBalance;
         const ptPositions = bot.paperTrader.getOpenPositions();
+        openPositionsCount = ptPositions.length;
         
-        // Calculate running P/L from paper trader positions
-        for (const pos of ptPositions) {
-          // Get current market price for unrealized P/L calculation
-          // For now, use entry price as current (will be updated with real market data)
-          const entryPrice = pos.position.entryPrice;
-          const currentPrice = entryPrice; // TODO: Get real market price
-          
-          // Calculate unrealized P/L
-          const quantity = pos.position.quantity;
-          const side = pos.position.side;
-          let unrealizedPnl = 0;
-          
-          if (side === 'BUY') {
-            unrealizedPnl = (currentPrice - entryPrice) * quantity;
-          } else {
-            unrealizedPnl = (entryPrice - currentPrice) * quantity;
-          }
-          
-          currentRunningPL += unrealizedPnl;
-        }
-        break; // Use first active bot's paper trader
+        // Calculate running P/L from paper trader positions (uses real-time equity calculation)
+        // PaperTrader already calculates unrealized P/L in getBalance()
+        currentRunningPL = ptBalance.equity - ptBalance.balance;
+        break; // Use first matching bot's paper trader
       }
     }
 
-    if (!paperTraderBalance && adapter) {
-      balance = await adapter.getBalance();
-      openPositions = await adapter.getOpenPositions();
-      currentRunningPL = openPositions.reduce((sum, pos) => {
-        return sum + (pos.unrealizedPnl || 0);
-      }, 0);
-    } else if (paperTraderBalance) {
-      balance = paperTraderBalance;
+    // Fallback to adapter if no paper trader
+    if (!balance && adapter) {
+      try {
+        balance = await adapter.getBalance();
+        const openPositions = await adapter.getOpenPositions();
+        openPositionsCount = openPositions.length;
+        currentRunningPL = openPositions.reduce((sum, pos) => {
+          return sum + (pos.unrealizedPnl || 0);
+        }, 0);
+      } catch (error) {
+        console.error('Error getting balance from adapter:', error);
+        // Use default balance
+        balance = {
+          balance: 10000,
+          equity: 10000,
+          margin: 0,
+          freeMargin: 10000,
+        };
+      }
     }
 
-    // Get historical trades from database
-    await connectToDatabase();
-    const brokerName = broker || 'demo';
+    // Get closed trades from SignalistBotTrade (optimized query)
+    const closedStatuses = ['CLOSED', 'TP_HIT', 'SL_HIT', 'REVERSE_SIGNAL', 'MANUAL_CLOSE', 'FORCE_STOP'];
     
-    const closedTrades = await BotTrade.find({
-      userId,
-      $or: [
-        { exchange: brokerName },
-        { exchange: broker },
-      ],
-      status: { $in: ['CLOSED', 'FILLED'] },
-      exitPrice: { $exists: true, $ne: null },
-      closedAt: { $exists: true, $ne: null },
-    })
-      .sort({ closedAt: -1 })
-      .lean();
+    const [closedTradesStats, openTradesCount] = await Promise.all([
+      // Use aggregation for faster calculation
+      SignalistBotTrade.aggregate([
+        {
+          $match: {
+            userId,
+            broker,
+            status: { $in: closedStatuses },
+            realizedPnl: { $exists: true }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalTrades: { $sum: 1 },
+            totalWins: {
+              $sum: { $cond: [{ $gt: [{ $ifNull: ['$realizedPnl', 0] }, 0] }, 1, 0] }
+            },
+            totalLosses: {
+              $sum: { $cond: [{ $lte: [{ $ifNull: ['$realizedPnl', 0] }, 0] }, 1, 0] }
+            },
+            totalProfitLoss: { $sum: { $ifNull: ['$realizedPnl', 0] } }
+          }
+        }
+      ]),
+      // Count open trades
+      SignalistBotTrade.countDocuments({
+        userId,
+        broker,
+        status: 'OPEN'
+      })
+    ]);
 
-    // Calculate metrics from closed trades
-    const totalWins = closedTrades.filter(t => (t.profitLoss || 0) > 0).length;
-    const totalLosses = closedTrades.filter(t => (t.profitLoss || 0) <= 0).length;
-    const totalTrades = closedTrades.length;
+    const stats = closedTradesStats[0] || {
+      totalTrades: 0,
+      totalWins: 0,
+      totalLosses: 0,
+      totalProfitLoss: 0,
+    };
+
+    const totalWins = stats.totalWins || 0;
+    const totalLosses = stats.totalLosses || 0;
+    const totalTrades = stats.totalTrades || 0;
     const winRate = totalTrades > 0 ? (totalWins / totalTrades) * 100 : 0;
-    const totalProfitLoss = closedTrades.reduce((sum, t) => sum + (t.profitLoss || 0), 0);
-
-    // Also get open positions count from paper trader if available
-    let openPositionsCount = openPositions.length;
-    if (activeBots.length > 0 && activeBots[0].paperTrader) {
-      openPositionsCount = activeBots[0].paperTrader.getOpenPositions().length;
+    const totalProfitLoss = stats.totalProfitLoss || 0;
+    
+    // Update open positions count if we have open trades in database
+    if (openTradesCount > 0) {
+      openPositionsCount = openTradesCount;
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       data: {
-        currentRunningPL,
+        currentRunningPL: parseFloat(currentRunningPL.toFixed(2)),
         balance: balance?.balance || 0,
         equity: balance?.equity || 0,
         margin: balance?.margin || 0,
         openPositions: openPositionsCount,
         totalWins,
         totalLosses,
-        winRate,
+        winRate: parseFloat(winRate.toFixed(2)),
         totalTrades,
-        totalProfitLoss,
+        totalProfitLoss: parseFloat(totalProfitLoss.toFixed(2)),
+        timestamp: new Date().toISOString(),
       },
     });
+
+    // Add caching headers for better performance (short cache for real-time data)
+    response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+    
+    return response;
   } catch (error: any) {
     console.error('Error updating P/L:', error);
     return NextResponse.json(

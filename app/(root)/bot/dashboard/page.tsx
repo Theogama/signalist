@@ -4,3 +4,4 @@ export default function BotDashboardPage() {
   return <SignalistBotDashboard />;
 }
 
+

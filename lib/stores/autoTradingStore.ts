@@ -142,9 +142,40 @@ const persistConfig = {
     selectedBot: state.selectedBot,
     botParams: state.botParams,
     botStatus: state.botStatus,
-    botStartTime: state.botStartTime,
+    // Convert Date to ISO string for persistence
+    botStartTime: state.botStartTime 
+      ? (state.botStartTime instanceof Date 
+          ? state.botStartTime.toISOString() 
+          : typeof state.botStartTime === 'string' 
+            ? state.botStartTime 
+            : null)
+      : null,
     // Don't persist: API keys, passwords, connection IDs, live data
   }),
+  // Transform dates back to Date objects on rehydration
+  onRehydrateStorage: () => (state) => {
+    if (state) {
+      // Convert botStartTime from string to Date
+      if (state.botStartTime) {
+        if (typeof state.botStartTime === 'string') {
+          const date = new Date(state.botStartTime);
+          state.botStartTime = isNaN(date.getTime()) ? null : date;
+        } else if (!(state.botStartTime instanceof Date)) {
+          state.botStartTime = null;
+        }
+      }
+      
+      // Convert botStopTime from string to Date
+      if (state.botStopTime) {
+        if (typeof state.botStopTime === 'string') {
+          const date = new Date(state.botStopTime);
+          state.botStopTime = isNaN(date.getTime()) ? null : date;
+        } else if (!(state.botStopTime instanceof Date)) {
+          state.botStopTime = null;
+        }
+      }
+    }
+  },
 };
 
 export const useAutoTradingStore = create<AutoTradingState>()(
@@ -170,8 +201,8 @@ export const useAutoTradingStore = create<AutoTradingState>()(
       botParams: null,
 
       botStatus: 'idle',
-      botStartTime: null,
-      botStopTime: null,
+      botStartTime: null as Date | null,
+      botStopTime: null as Date | null,
 
       liveLogs: [],
       openTrades: [],
@@ -192,15 +223,14 @@ export const useAutoTradingStore = create<AutoTradingState>()(
           const requestBody: any = { broker };
           
           if (broker === 'exness') {
-            // Exness uses MT5 credentials
-            if (mt5Login && mt5Password && mt5Server) {
-              requestBody.login = mt5Login;
-              requestBody.password = mt5Password;
-              requestBody.server = mt5Server;
-              requestBody.demo = mt5Server === 'Exness-MT5Trial';
-            } else {
-              requestBody.demo = true;
+            // Exness REQUIRES MT5 credentials (no demo mode without credentials)
+            if (!mt5Login || !mt5Password || !mt5Server) {
+              throw new Error('Exness requires MT5 credentials. Please provide login, password, and server.');
             }
+            requestBody.login = mt5Login;
+            requestBody.password = mt5Password;
+            requestBody.server = mt5Server;
+            requestBody.demo = mt5Server === 'Exness-MT5Trial';
           } else if (broker === 'deriv') {
             // Deriv uses API keys
             requestBody.apiKey = apiKey || '';
@@ -215,8 +245,22 @@ export const useAutoTradingStore = create<AutoTradingState>()(
           });
 
           if (!response.ok) {
-            const text = await response.text().catch(() => '');
-            throw new Error(`Request failed: ${response.status} ${text.substring(0, 200)}`);
+            let errorMessage = `Request failed: ${response.status}`;
+            try {
+              const errorData = await safeJsonParse<ApiResponse>(response);
+              errorMessage = errorData.error || errorMessage;
+            } catch {
+              const text = await response.text().catch(() => '');
+              if (text) {
+                try {
+                  const errorData = JSON.parse(text);
+                  errorMessage = errorData.error || errorMessage;
+                } catch {
+                  errorMessage = text.substring(0, 200) || errorMessage;
+                }
+              }
+            }
+            throw new Error(errorMessage);
           }
 
           const data = await safeJsonParse<ApiResponse>(response);
@@ -226,7 +270,8 @@ export const useAutoTradingStore = create<AutoTradingState>()(
           }
 
           // Extract connection ID from response if available (for MT5)
-          const connectionId = data.data?.connectionId || null;
+          // Handle both connectionId and connection_id naming conventions
+          const connectionId = data.data?.connectionId || data.data?.connection_id || null;
           
           // Fetch account balance
           try {
@@ -306,24 +351,54 @@ export const useAutoTradingStore = create<AutoTradingState>()(
       },
 
       // Connect broker in demo mode (no API keys required)
+      // Note: Exness does NOT support demo mode without credentials
       connectBrokerDemo: async (broker) => {
+        if (broker === 'exness') {
+          throw new Error('Exness requires MT5 credentials. Demo mode is not available. Please use MT5 login credentials.');
+        }
         await get().connectBroker(broker);
       },
 
-      // Disconnect broker
-      disconnectBroker: () => {
-        set({
-          connectedBroker: null,
-          brokerApiKey: null,
-          brokerApiSecret: null,
-          mt5ConnectionId: null,
-          mt5Login: null,
-          mt5Server: null,
-          selectedInstrument: null,
-          availableInstruments: [],
-          botStatus: 'idle',
-        });
-      },
+        // Disconnect broker
+        disconnectBroker: async () => {
+          const { connectedBroker, mt5ConnectionId } = get();
+          
+          // Call API to disconnect from backend
+          if (connectedBroker) {
+            try {
+              await fetch('/api/auto-trading/disconnect-broker', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  broker: connectedBroker,
+                  connectionId: mt5ConnectionId,
+                }),
+              });
+            } catch (error) {
+              console.error('Error disconnecting broker:', error);
+              // Continue with local disconnect even if API call fails
+            }
+          }
+          
+          // Clear local state
+          set({
+            connectedBroker: null,
+            brokerApiKey: null,
+            brokerApiSecret: null,
+            mt5ConnectionId: null,
+            mt5Login: null,
+            mt5Server: null,
+            selectedInstrument: null,
+            availableInstruments: [],
+            botStatus: 'idle',
+            balance: 0,
+            equity: 0,
+            margin: 0,
+            openTrades: [],
+            closedTrades: [],
+            liveLogs: [],
+          });
+        },
 
       // Set selected instrument
       setSelectedInstrument: (instrument) => {
@@ -354,7 +429,11 @@ export const useAutoTradingStore = create<AutoTradingState>()(
           throw new Error('Bot, parameters, instrument, and broker must be selected');
         }
 
-        set({ botStatus: 'running', botStartTime: new Date() });
+        set({ 
+          botStatus: 'running', 
+          botStartTime: new Date(),
+          botStopTime: null, // Clear stop time when starting
+        });
 
         try {
           // Use new unified start API endpoint
@@ -394,10 +473,49 @@ export const useAutoTradingStore = create<AutoTradingState>()(
 
       // Stop bot
       stopBot: async () => {
-        const { selectedBot } = get();
+        const { selectedBot, botStatus } = get();
+        
+        // If already stopped or idle, just update state
+        if (botStatus === 'idle' || botStatus === 'error') {
+          set({
+            botStatus: 'idle',
+            botStopTime: new Date(),
+            botStartTime: null,
+          });
+          return;
+        }
         
         if (!selectedBot) {
-          throw new Error('No bot selected');
+          // Try to stop any active bot if no bot is selected
+          try {
+            const response = await fetch('/api/auto-trading/stop', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            });
+            
+            if (response.ok) {
+              const data = await safeJsonParse<ApiResponse>(response);
+              if (data.success) {
+                set({
+                  botStatus: 'idle',
+                  botStopTime: new Date(),
+                  botStartTime: null,
+                });
+                get().disconnectWebSocket();
+                return;
+              }
+            }
+          } catch (error) {
+            // Ignore errors when no bot is selected
+          }
+          
+          set({
+            botStatus: 'idle',
+            botStopTime: new Date(),
+            botStartTime: null,
+          });
+          return;
         }
 
         set({ botStatus: 'stopping' });
@@ -412,25 +530,50 @@ export const useAutoTradingStore = create<AutoTradingState>()(
             }),
           });
 
+          // Handle response - even if 404, check if it's because bot is already stopped
+          let data: ApiResponse;
           if (!response.ok) {
-            const text = await response.text().catch(() => '');
-            throw new Error(`Request failed: ${response.status} ${text.substring(0, 200)}`);
+            try {
+              data = await safeJsonParse<ApiResponse>(response);
+              // If bot is already stopped, treat as success
+              if (response.status === 404 && data.error?.includes('already stopped')) {
+                data = { success: true, message: 'Bot is already stopped' };
+              } else {
+                throw new Error(data.error || `Request failed: ${response.status}`);
+              }
+            } catch (parseError) {
+              const text = await response.text().catch(() => '');
+              throw new Error(`Request failed: ${response.status} ${text.substring(0, 200)}`);
+            }
+          } else {
+            data = await safeJsonParse<ApiResponse>(response);
           }
 
-          const data = await safeJsonParse<ApiResponse>(response);
+          // Treat as success even if bot was already stopped
+          if (data.success || data.data?.alreadyStopped) {
+            set({
+              botStatus: 'idle',
+              botStopTime: new Date(),
+              botStartTime: null, // Clear start time when stopping
+            });
 
-          if (!data.success) {
+            // Disconnect WebSocket
+            get().disconnectWebSocket();
+          } else {
             throw new Error(data.error || 'Failed to stop auto-trade');
           }
-
-          set({
-            botStatus: 'idle',
-            botStopTime: new Date(),
-          });
-
-          // Disconnect WebSocket
-          get().disconnectWebSocket();
         } catch (error: any) {
+          // If error is about bot not found/already stopped, treat as success
+          if (error.message?.includes('already stopped') || error.message?.includes('not found')) {
+            set({
+              botStatus: 'idle',
+              botStopTime: new Date(),
+              botStartTime: null,
+            });
+            get().disconnectWebSocket();
+            return;
+          }
+          
           set({
             botStatus: 'error',
             connectionError: error.message,

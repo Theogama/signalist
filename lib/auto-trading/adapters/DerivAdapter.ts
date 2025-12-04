@@ -31,7 +31,10 @@ export class DerivAdapter extends BaseAdapter {
 
   async initialize(config: BrokerConfig): Promise<void> {
     this.config = config;
-    this.paperTrading = config.environment === 'demo' || false;
+    // Set paper trading mode from config or environment
+    this.paperTrading = config.paperTrading !== undefined 
+      ? config.paperTrading 
+      : (config.environment === 'demo' || false);
     this.rateLimitRpm = config.rateLimitRpm || 60;
     this.rateLimitRps = config.rateLimitRps || 10;
     
@@ -39,12 +42,32 @@ export class DerivAdapter extends BaseAdapter {
       this.apiBaseUrl = config.baseUrl;
     }
 
-    await this.authenticate();
+    // Only authenticate if not in paper trading mode and API keys are provided
+    if (!this.paperTrading && config.apiKey && config.apiSecret) {
+      try {
+        await this.authenticate();
+      } catch (error) {
+        console.error('Deriv authentication failed during initialization:', error);
+        // Don't throw - let it fail gracefully if in demo mode
+        if (config.environment !== 'demo') {
+          throw error;
+        }
+      }
+    } else if (this.paperTrading) {
+      // In paper trading mode, mark as authenticated but don't actually authenticate
+      this.authenticated = true;
+    }
     
     // Initialize WebSocket connection for real-time data (client-side only)
     // Server-side adapters will use REST API
+    // Only connect WebSocket in browser environment (not in Node.js/server)
     if (typeof window !== 'undefined' && typeof WebSocket !== 'undefined') {
-      this.connectWebSocket();
+      try {
+        this.connectWebSocket();
+      } catch (error) {
+        console.warn('[DerivAdapter] WebSocket connection failed (non-critical):', error);
+        // Don't throw - WebSocket is optional for server-side operations
+      }
     }
   }
 
@@ -89,13 +112,21 @@ export class DerivAdapter extends BaseAdapter {
   }
 
   private async ensureAuthenticated(): Promise<void> {
+    // Skip authentication in paper trading mode
+    if (this.paperTrading) {
+      return;
+    }
+    
     if (!this.authenticated || Date.now() >= this.tokenExpiry) {
       await this.authenticate();
     }
   }
 
   private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
-    await this.ensureAuthenticated();
+    // Skip authentication check in paper trading mode
+    if (!this.paperTrading) {
+      await this.ensureAuthenticated();
+    }
 
     return this.rateLimit(async () => {
       const response = await fetch(`${this.apiBaseUrl}${endpoint}`, {
@@ -410,8 +441,10 @@ export class DerivAdapter extends BaseAdapter {
    * Connect to Deriv WebSocket API
    */
   private connectWebSocket(): void {
-    if (typeof WebSocket === 'undefined') {
-      console.warn('[DerivAdapter] WebSocket not available');
+    // Check if WebSocket is available (client-side only)
+    // Skip on server side (Node.js environment)
+    if (typeof WebSocket === 'undefined' || typeof window === 'undefined') {
+      console.warn('[DerivAdapter] WebSocket not available (server-side or not supported)');
       return;
     }
 

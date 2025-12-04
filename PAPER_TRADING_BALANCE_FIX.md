@@ -104,3 +104,4 @@ To verify the fix:
 - `app/api/auto-trading/live-updates/route.ts` - Gets fresh balance from PaperTrader
 
 
+

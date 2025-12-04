@@ -26,41 +26,81 @@ export async function GET(request: NextRequest) {
     const broker = request.nextUrl.searchParams.get('broker') as 'exness' | 'deriv' | null;
 
     // Build query
-    const tradeQuery: any = { userId };
+    const matchQuery: any = { userId };
     if (broker) {
-      tradeQuery.broker = broker;
+      matchQuery.broker = broker;
     }
 
-    // Get all trades from database
-    const allTrades = await SignalistBotTrade.find(tradeQuery)
-      .sort({ entryTimestamp: -1 })
-      .lean();
+    // Use MongoDB aggregation for efficient calculations
+    const closedStatuses = ['CLOSED', 'TP_HIT', 'SL_HIT', 'REVERSE_SIGNAL', 'MANUAL_CLOSE', 'FORCE_STOP'];
+    
+    // Aggregation pipeline for closed trades statistics
+    const closedTradesStats = await SignalistBotTrade.aggregate([
+      { $match: { ...matchQuery, status: { $in: closedStatuses } } },
+      {
+        $group: {
+          _id: null,
+          totalTrades: { $sum: 1 },
+          totalProfitLoss: { $sum: { $ifNull: ['$realizedPnl', 0] } },
+          winningTrades: {
+            $sum: { $cond: [{ $gt: [{ $ifNull: ['$realizedPnl', 0] }, 0] }, 1, 0] }
+          },
+          losingTrades: {
+            $sum: { $cond: [{ $lt: [{ $ifNull: ['$realizedPnl', 0] }, 0] }, 1, 0] }
+          },
+          totalProfit: {
+            $sum: { $cond: [{ $gt: [{ $ifNull: ['$realizedPnl', 0] }, 0] }, { $ifNull: ['$realizedPnl', 0] }, 0] }
+          },
+          totalLoss: {
+            $sum: { $cond: [{ $lt: [{ $ifNull: ['$realizedPnl', 0] }, 0] }, { $abs: { $ifNull: ['$realizedPnl', 0] } }, 0] }
+          },
+          avgProfit: {
+            $avg: { $cond: [{ $gt: [{ $ifNull: ['$realizedPnl', 0] }, 0] }, { $ifNull: ['$realizedPnl', 0] }, null] }
+          },
+          avgLoss: {
+            $avg: { $cond: [{ $lt: [{ $ifNull: ['$realizedPnl', 0] }, 0] }, { $abs: { $ifNull: ['$realizedPnl', 0] } }, null] }
+          },
+          bestTrade: { $max: '$realizedPnl' },
+          worstTrade: { $min: '$realizedPnl' },
+        }
+      }
+    ]);
 
-    // Calculate statistics
-    const closedTrades = allTrades.filter(t => 
-      ['CLOSED', 'TP_HIT', 'SL_HIT', 'REVERSE_SIGNAL', 'MANUAL_CLOSE', 'FORCE_STOP'].includes(t.status)
-    );
-    const openTrades = allTrades.filter(t => t.status === 'OPEN');
+    // Get open trades count
+    const openTradesCount = await SignalistBotTrade.countDocuments({ ...matchQuery, status: 'OPEN' });
 
-    // Calculate P/L metrics
-    const totalProfitLoss = closedTrades.reduce((sum, t) => sum + (t.realizedPnl || 0), 0);
-    const winningTrades = closedTrades.filter(t => (t.realizedPnl || 0) > 0);
-    const losingTrades = closedTrades.filter(t => (t.realizedPnl || 0) < 0);
-    const winRate = closedTrades.length > 0 
-      ? (winningTrades.length / closedTrades.length) * 100 
-      : 0;
+    // Get best and worst trades with details
+    const [bestTrade, worstTrade] = await Promise.all([
+      SignalistBotTrade.findOne({ ...matchQuery, status: { $in: closedStatuses } })
+        .sort({ realizedPnl: -1 })
+        .lean(),
+      SignalistBotTrade.findOne({ ...matchQuery, status: { $in: closedStatuses } })
+        .sort({ realizedPnl: 1 })
+        .lean(),
+    ]);
 
-    // Calculate average profit/loss
-    const avgProfit = winningTrades.length > 0
-      ? winningTrades.reduce((sum, t) => sum + (t.realizedPnl || 0), 0) / winningTrades.length
-      : 0;
-    const avgLoss = losingTrades.length > 0
-      ? losingTrades.reduce((sum, t) => sum + Math.abs(t.realizedPnl || 0), 0) / losingTrades.length
-      : 0;
+    // Calculate metrics from aggregation results
+    const stats = closedTradesStats[0] || {
+      totalTrades: 0,
+      totalProfitLoss: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      totalProfit: 0,
+      totalLoss: 0,
+      avgProfit: 0,
+      avgLoss: 0,
+      bestTrade: 0,
+      worstTrade: 0,
+    };
 
-    // Calculate profit factor
-    const totalProfit = winningTrades.reduce((sum, t) => sum + (t.realizedPnl || 0), 0);
-    const totalLoss = Math.abs(losingTrades.reduce((sum, t) => sum + (t.realizedPnl || 0), 0));
+    const totalProfitLoss = stats.totalProfitLoss || 0;
+    const winningTrades = stats.winningTrades || 0;
+    const losingTrades = stats.losingTrades || 0;
+    const winRate = stats.totalTrades > 0 ? (winningTrades / stats.totalTrades) * 100 : 0;
+    const avgProfit = stats.avgProfit || 0;
+    const avgLoss = stats.avgLoss || 0;
+    const totalProfit = stats.totalProfit || 0;
+    const totalLoss = stats.totalLoss || 0;
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : (totalProfit > 0 ? Infinity : 0);
 
     // Get account data
@@ -81,71 +121,99 @@ export async function GET(request: NextRequest) {
       ? ((totalBalance - totalInitialBalance) / totalInitialBalance) * 100 
       : 0;
 
-    // Get recent trades (last 30 days)
+    // Get recent trades (last 30 days) using aggregation
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const recentTrades = closedTrades.filter(t => 
-      t.exitTimestamp && new Date(t.exitTimestamp) >= thirtyDaysAgo
-    );
-    const recentPL = recentTrades.reduce((sum, t) => sum + (t.realizedPnl || 0), 0);
-
-    // Get daily statistics
-    const dailyStats: Record<string, { trades: number; profitLoss: number }> = {};
-    closedTrades.forEach(trade => {
-      if (trade.exitTimestamp) {
-        const date = new Date(trade.exitTimestamp).toISOString().split('T')[0];
-        if (!dailyStats[date]) {
-          dailyStats[date] = { trades: 0, profitLoss: 0 };
+    
+    const recentStats = await SignalistBotTrade.aggregate([
+      {
+        $match: {
+          ...matchQuery,
+          status: { $in: closedStatuses },
+          exitTimestamp: { $gte: thirtyDaysAgo }
         }
-        dailyStats[date].trades += 1;
-        dailyStats[date].profitLoss += trade.realizedPnl || 0;
+      },
+      {
+        $group: {
+          _id: null,
+          recentTrades: { $sum: 1 },
+          recentPL: { $sum: { $ifNull: ['$realizedPnl', 0] } }
+        }
       }
-    });
+    ]);
 
-    // Get best and worst trades
-    const bestTrade = closedTrades.length > 0
-      ? closedTrades.reduce((best, t) => 
-          (t.realizedPnl || 0) > (best.realizedPnl || 0) ? t : best
-        )
-      : null;
-    const worstTrade = closedTrades.length > 0
-      ? closedTrades.reduce((worst, t) => 
-          (t.realizedPnl || 0) < (worst.realizedPnl || 0) ? t : worst
-        )
-      : null;
+    const recentTradesCount = recentStats[0]?.recentTrades || 0;
+    const recentPL = recentStats[0]?.recentPL || 0;
 
-    // Calculate longest winning/losing streaks
+    // Get daily statistics using aggregation
+    const dailyStatsAgg = await SignalistBotTrade.aggregate([
+      {
+        $match: {
+          ...matchQuery,
+          status: { $in: closedStatuses },
+          exitTimestamp: { $exists: true, $ne: null }
+        }
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$exitTimestamp' } },
+          trades: { $sum: 1 },
+          profitLoss: { $sum: { $ifNull: ['$realizedPnl', 0] } }
+        }
+      },
+      { $sort: { _id: -1 } },
+      { $limit: 30 }
+    ]);
+
+    const dailyStats = dailyStatsAgg.map(item => ({
+      date: item._id,
+      trades: item.trades,
+      profitLoss: parseFloat(item.profitLoss.toFixed(2)),
+    }));
+
+    // Calculate streaks - need to fetch trades sorted by exit time
+    const tradesForStreaks = await SignalistBotTrade.find({
+      ...matchQuery,
+      status: { $in: closedStatuses },
+      exitTimestamp: { $exists: true }
+    })
+      .sort({ exitTimestamp: 1 })
+      .select('realizedPnl')
+      .lean()
+      .limit(1000); // Limit for performance
+
     let currentWinStreak = 0;
     let maxWinStreak = 0;
     let currentLossStreak = 0;
     let maxLossStreak = 0;
 
-    closedTrades.forEach(trade => {
-      if ((trade.realizedPnl || 0) > 0) {
+    tradesForStreaks.forEach((trade: any) => {
+      const pnl = trade.realizedPnl || 0;
+      if (pnl > 0) {
         currentWinStreak++;
         maxWinStreak = Math.max(maxWinStreak, currentWinStreak);
         currentLossStreak = 0;
-      } else if ((trade.realizedPnl || 0) < 0) {
+      } else if (pnl < 0) {
         currentLossStreak++;
         maxLossStreak = Math.max(maxLossStreak, currentLossStreak);
         currentWinStreak = 0;
       }
     });
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       data: {
         // Overall statistics
-        totalTrades: closedTrades.length,
-        openTrades: openTrades.length,
-        totalProfitLoss,
+        totalTrades: stats.totalTrades || 0,
+        openTrades: openTradesCount,
+        totalProfitLoss: parseFloat(totalProfitLoss.toFixed(2)),
         totalROI,
         
         // Win/Loss metrics
-        winningTrades: winningTrades.length,
-        losingTrades: losingTrades.length,
+        winningTrades,
+        losingTrades,
         winRate: parseFloat(winRate.toFixed(2)),
-        profitFactor: parseFloat(profitFactor.toFixed(2)),
+        profitFactor: isFinite(profitFactor) ? parseFloat(profitFactor.toFixed(2)) : 0,
         
         // Average metrics
         avgProfit: parseFloat(avgProfit.toFixed(2)),
@@ -161,7 +229,7 @@ export async function GET(request: NextRequest) {
         totalInitialBalance: parseFloat(totalInitialBalance.toFixed(2)),
         
         // Recent performance (30 days)
-        recentTrades: recentTrades.length,
+        recentTrades: recentTradesCount,
         recentProfitLoss: parseFloat(recentPL.toFixed(2)),
         
         // Best/Worst trades
@@ -179,16 +247,14 @@ export async function GET(request: NextRequest) {
         } : null,
         
         // Daily statistics
-        dailyStats: Object.entries(dailyStats)
-          .map(([date, stats]) => ({
-            date,
-            trades: stats.trades,
-            profitLoss: parseFloat(stats.profitLoss.toFixed(2)),
-          }))
-          .sort((a, b) => b.date.localeCompare(a.date))
-          .slice(0, 30), // Last 30 days
+        dailyStats,
       },
     });
+
+    // Add caching headers for better performance
+    response.headers.set('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=10');
+    
+    return response;
   } catch (error: any) {
     console.error('Error fetching trading statistics:', error);
     return NextResponse.json(
@@ -197,4 +263,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
 

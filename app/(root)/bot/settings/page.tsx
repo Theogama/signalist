@@ -4,3 +4,4 @@ export default function BotSettingsPage() {
   return <SignalistBotSettings />;
 }
 
+

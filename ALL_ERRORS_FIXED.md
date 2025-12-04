@@ -72,3 +72,4 @@ The application should now:
 1. Test the application: `npm run build && npm run dev`
 2. The remaining errors are in optional/advanced features and won't affect core functionality
 
+

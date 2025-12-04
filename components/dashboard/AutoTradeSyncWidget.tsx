@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useStatistics } from '@/lib/hooks/useStatistics';
 import { useAutoTradingStore } from '@/lib/stores/autoTradingStore';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -36,33 +37,10 @@ export default function AutoTradeSyncWidget() {
   } = useAutoTradingStore();
 
   const [isClient, setIsClient] = useState(false);
-  const [persistentStats, setPersistentStats] = useState<{
-    totalProfitLoss: number;
-    totalTrades: number;
-  } | null>(null);
+  const { stats: persistentStats } = useStatistics({ refreshInterval: 30000 });
 
   useEffect(() => {
     setIsClient(true);
-    
-    // Fetch persistent statistics
-    const fetchPersistentStats = async () => {
-      try {
-        const response = await fetch('/api/auto-trading/statistics');
-        const data = await response.json();
-        if (data.success) {
-          setPersistentStats({
-            totalProfitLoss: data.data.totalProfitLoss || 0,
-            totalTrades: data.data.totalTrades || 0,
-          });
-        }
-      } catch (error) {
-        console.error('Error fetching persistent stats:', error);
-      }
-    };
-
-    fetchPersistentStats();
-    const interval = setInterval(fetchPersistentStats, 30000);
-    return () => clearInterval(interval);
   }, []);
 
   // Calculate metrics (live data)

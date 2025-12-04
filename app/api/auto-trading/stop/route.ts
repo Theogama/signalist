@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     }
 
     const userId = session.user.id;
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const { botId } = body;
 
     if (!botId) {
@@ -29,14 +29,46 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check if bot exists before trying to stop
+    const activeBot = botManager.getActiveBot(userId, botId);
+    
+    // If bot doesn't exist, check if there are any active bots for this user
+    if (!activeBot) {
+      const userBots = botManager.getUserBots(userId);
+      
+      // If no active bots at all, the bot is already stopped (success case)
+      if (userBots.length === 0) {
+        return NextResponse.json({
+          success: true,
+          message: 'Bot is already stopped',
+          data: {
+            botId,
+            stoppedAt: new Date().toISOString(),
+            alreadyStopped: true,
+          },
+        });
+      }
+      
+      // Bot not found but other bots exist - return error
+      return NextResponse.json(
+        { success: false, error: `Bot "${botId}" not found. Active bots: ${userBots.map(b => b.botId).join(', ')}` },
+        { status: 404 }
+      );
+    }
+
     // Stop bot
     const stopped = botManager.stopBot(userId, botId);
     
     if (!stopped) {
-      return NextResponse.json(
-        { success: false, error: 'Bot not found or already stopped' },
-        { status: 404 }
-      );
+      // This shouldn't happen if we found the bot, but handle it gracefully
+      return NextResponse.json({
+        success: true,
+        message: 'Bot was already stopping or stopped',
+        data: {
+          botId,
+          stoppedAt: new Date().toISOString(),
+        },
+      });
     }
 
     return NextResponse.json({
@@ -54,4 +86,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
 

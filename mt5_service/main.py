@@ -8,10 +8,10 @@ import sys
 import json
 import logging
 from typing import Dict, Any, Optional, List
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from flask import Flask, request, jsonify  # pyright: ignore[reportMissingImports]
+from flask_cors import CORS  # pyright: ignore[reportMissingModuleSource]
 from datetime import datetime
-import MetaTrader5 as mt5
+import MetaTrader5 as mt5  # pyright: ignore[reportMissingImports]
 
 # Configure logging
 logging.basicConfig(
@@ -574,4 +574,5 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting MT5 Trading Service on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
+
 

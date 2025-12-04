@@ -26,6 +26,9 @@ export async function GET(request: NextRequest) {
       async start(controller) {
         const encoder = new TextEncoder();
         
+        // Track previous closed trades to detect new ones (scoped to this stream)
+        const previousClosedTradeIds = new Set<string>();
+        
         // Send initial connection message
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ type: 'connected', message: 'Live updates connected' })}\n\n`)
@@ -45,6 +48,33 @@ export async function GET(request: NextRequest) {
                 )
               );
             }
+            
+            // If log is a trade event with closed status, send trade_closed event
+            if (log.type === 'trade' && log.data) {
+              const trade = log.data;
+              if (trade.status && ['CLOSED', 'TP_HIT', 'SL_HIT', 'STOPPED'].includes(trade.status)) {
+                // Send immediate trade_closed event
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: 'trade_closed',
+                      data: {
+                        id: trade.tradeId || trade.id,
+                        symbol: trade.symbol,
+                        side: trade.side,
+                        entryPrice: trade.entryPrice,
+                        exitPrice: trade.exitPrice,
+                        quantity: trade.quantity,
+                        profitLoss: trade.profitLoss,
+                        status: trade.status,
+                        closedAt: trade.closedAt || new Date().toISOString(),
+                      },
+                    })}\n\n`
+                  )
+                );
+              }
+            }
+            
             // Always send log events
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ type: 'log', data: log })}\n\n`)
@@ -93,7 +123,7 @@ export async function GET(request: NextRequest) {
 
                 // Get closed trades from history
                 const history = bot.paperTrader.getHistory();
-                closedTrades.push(...history.slice(-10).map((trade) => ({
+                const recentClosed = history.slice(-10).map((trade) => ({
                   id: trade.tradeId,
                   symbol: trade.symbol,
                   side: trade.side,
@@ -105,7 +135,25 @@ export async function GET(request: NextRequest) {
                           trade.status === 'STOPPED' ? 'STOPPED' as const : 'CLOSED' as const,
                   openedAt: trade.openedAt,
                   closedAt: trade.closedAt,
-                })));
+                }));
+                
+                // Detect new closed trades and send immediate events
+                recentClosed.forEach((trade) => {
+                  if (!previousClosedTradeIds.has(trade.id)) {
+                    // New closed trade - send immediate event
+                    controller.enqueue(
+                      encoder.encode(
+                        `data: ${JSON.stringify({
+                          type: 'trade_closed',
+                          data: trade,
+                        })}\n\n`
+                      )
+                    );
+                    previousClosedTradeIds.add(trade.id);
+                  }
+                });
+                
+                closedTrades.push(...recentClosed);
               }
             }
 

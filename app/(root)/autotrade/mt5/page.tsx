@@ -11,3 +11,4 @@ export default function MT5TradingPage() {
   return <MT5TradingDashboard />;
 }
 
+

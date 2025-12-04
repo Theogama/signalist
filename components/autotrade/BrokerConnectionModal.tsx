@@ -54,6 +54,12 @@ export default function BrokerConnectionModal() {
   const handleQuickConnect = async (selectedBroker: BrokerType, connectionType: 'oauth2' | 'quick_connect' = 'quick_connect') => {
     if (!selectedBroker) return;
 
+    // Check if already connected to a different broker
+    if (connectedBroker && connectedBroker !== selectedBroker) {
+      toast.error(`Please disconnect from ${connectedBroker.toUpperCase()} first before connecting to ${selectedBroker.toUpperCase()}`);
+      return;
+    }
+
     try {
       setIsValidating(true);
       
@@ -102,11 +108,31 @@ export default function BrokerConnectionModal() {
   };
 
   const handleConnectDemo = async (selectedBroker: BrokerType) => {
-    // Use quick connect for demo mode
+    // Check if already connected to a different broker
+    if (connectedBroker && connectedBroker !== selectedBroker) {
+      toast.error(`Please disconnect from ${connectedBroker.toUpperCase()} first before connecting to ${selectedBroker?.toUpperCase()}`);
+      return;
+    }
+    
+    // Exness does not support demo mode without credentials
+    if (selectedBroker === 'exness') {
+      toast.error('Exness requires MT5 credentials. Please enter your login, password, and server.');
+      setBroker('exness');
+      setUseDemo(false);
+      return;
+    }
+    
+    // Use quick connect for demo mode (Deriv only)
     await handleQuickConnect(selectedBroker, 'quick_connect');
   };
 
   const handleConnect = async () => {
+    // Check if already connected to a different broker
+    if (connectedBroker && connectedBroker !== broker) {
+      toast.error(`Please disconnect from ${connectedBroker.toUpperCase()} first before connecting to ${broker?.toUpperCase()}`);
+      return;
+    }
+
     if (!broker) {
       toast.error('Please select a broker');
       return;
@@ -114,8 +140,9 @@ export default function BrokerConnectionModal() {
 
     // Validation based on broker type
     if (broker === 'exness') {
-      if (!useDemo && (!mt5Login || !mt5Password || !mt5Server)) {
-        toast.error('Please fill in all MT5 fields or use Demo Mode');
+      // Exness always requires MT5 credentials (no demo mode)
+      if (!mt5Login || !mt5Password || !mt5Server) {
+        toast.error('Exness requires MT5 credentials. Please fill in all MT5 fields.');
         return;
       }
     } else if (broker === 'deriv') {
@@ -127,17 +154,17 @@ export default function BrokerConnectionModal() {
 
     try {
       setIsValidating(true);
-      if (useDemo) {
+      if (broker === 'exness') {
+        // Exness always uses MT5 connection (no demo mode)
+        await connectBroker(broker, undefined, undefined, mt5Login, mt5Password, mt5Server);
+        toast.success(`Successfully connected to ${broker.toUpperCase()}`);
+      } else if (useDemo) {
+        // Deriv demo mode
         await connectBrokerDemo(broker);
         toast.success(`Successfully connected to ${broker.toUpperCase()} in Demo Mode`);
       } else {
-        if (broker === 'exness') {
-          // Use MT5 connection for Exness
-          await connectBroker(broker, undefined, undefined, mt5Login, mt5Password, mt5Server);
-        } else {
-          // Use API keys for Deriv
-          await connectBroker(broker, apiKey, apiSecret);
-        }
+        // Deriv live mode with API keys
+        await connectBroker(broker, apiKey, apiSecret);
         toast.success(`Successfully connected to ${broker.toUpperCase()}`);
       }
       setOpen(false);
@@ -153,9 +180,21 @@ export default function BrokerConnectionModal() {
     }
   };
 
-  const handleDisconnect = () => {
-    disconnectBroker();
-    toast.success('Broker disconnected');
+  const handleDisconnect = async () => {
+    try {
+      await disconnectBroker();
+      toast.success('Broker disconnected successfully');
+      setOpen(false);
+      // Reset form fields
+      setBroker(null);
+      setApiKey('');
+      setApiSecret('');
+      setMt5Login('');
+      setMt5Password('');
+      setMt5Server('Exness-MT5Trial');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to disconnect broker');
+    }
   };
 
   return (
@@ -164,11 +203,14 @@ export default function BrokerConnectionModal() {
         {connectedBroker ? (
           <Button 
             variant="outline" 
-            onClick={handleDisconnect}
+            onClick={(e) => {
+              e.preventDefault();
+              setOpen(true);
+            }}
             className="text-sm sm:text-base"
           >
-            <span className="hidden sm:inline">Disconnect {connectedBroker.toUpperCase()}</span>
-            <span className="sm:hidden">Disconnect</span>
+            <span className="hidden sm:inline">Manage {connectedBroker.toUpperCase()} Connection</span>
+            <span className="sm:hidden">Manage</span>
           </Button>
         ) : (
           <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
@@ -214,6 +256,16 @@ export default function BrokerConnectionModal() {
           <div className="space-y-3">
             <Label className="text-sm font-semibold">Select Broker</Label>
             
+            {/* Warning if trying to switch brokers */}
+            {connectedBroker && broker && connectedBroker !== broker && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                <p className="text-xs sm:text-sm text-red-400 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Disconnect from {connectedBroker.toUpperCase()} first to connect to {broker.toUpperCase()}</span>
+                </p>
+              </div>
+            )}
+            
             {/* Desktop: Toggle Switch */}
             <div className="hidden sm:flex items-center justify-center gap-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
               <Button
@@ -224,6 +276,7 @@ export default function BrokerConnectionModal() {
                   setApiSecret('');
                   setMt5Login('');
                   setMt5Password('');
+                  setUseDemo(false); // Exness doesn't support demo mode
                 }}
                 disabled={isValidating || isConnecting}
                 className={`flex-1 ${
@@ -248,6 +301,7 @@ export default function BrokerConnectionModal() {
                   setApiSecret('');
                   setMt5Login('');
                   setMt5Password('');
+                  setUseDemo(true); // Deriv supports demo mode by default
                 }}
                 disabled={isValidating || isConnecting}
                 className={`flex-1 ${
@@ -283,11 +337,14 @@ export default function BrokerConnectionModal() {
                 <Select
                   value={broker || ''}
                   onValueChange={(value) => {
-                    setBroker(value as BrokerType);
+                    const selectedBroker = value as BrokerType;
+                    setBroker(selectedBroker);
                     setApiKey('');
                     setApiSecret('');
                     setMt5Login('');
                     setMt5Password('');
+                    // Exness doesn't support demo mode, Deriv does
+                    setUseDemo(selectedBroker === 'deriv');
                   }}
                   disabled={isValidating || isConnecting}
                 >
@@ -304,16 +361,21 @@ export default function BrokerConnectionModal() {
           </div>
 
           {/* Quick Connect Buttons - Mobile Responsive */}
+          {/* Note: Exness does not support demo mode - requires MT5 credentials */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <Button
               variant="outline"
-              onClick={() => handleConnectDemo('exness')}
+              onClick={() => {
+                toast.error('Exness requires MT5 credentials. Please use the form below to connect.');
+                setBroker('exness');
+                setUseDemo(false);
+              }}
               disabled={isValidating || isConnecting}
               className="flex items-center justify-center gap-2 text-sm sm:text-base"
             >
               <Zap className="h-4 w-4" />
-              <span className="hidden sm:inline">Quick Connect Exness (Demo)</span>
-              <span className="sm:hidden">Exness Demo</span>
+              <span className="hidden sm:inline">Exness (Requires MT5)</span>
+              <span className="sm:hidden">Exness</span>
             </Button>
             <Button
               variant="outline"
@@ -337,25 +399,36 @@ export default function BrokerConnectionModal() {
           </div>
 
           {/* Demo Mode Toggle - Mobile Responsive */}
-          <div className="flex items-center justify-between p-3 sm:p-4 bg-gray-800 rounded-lg border border-gray-700">
-            <div className="flex-1">
-              <Label htmlFor="demoMode" className="cursor-pointer text-sm sm:text-base">
-                Demo Mode
-              </Label>
-              <p className="text-xs text-gray-500 mt-1 hidden sm:block">
-                No credentials required
+          {/* Note: Exness does not support demo mode */}
+          {broker !== 'exness' && (
+            <div className="flex items-center justify-between p-3 sm:p-4 bg-gray-800 rounded-lg border border-gray-700">
+              <div className="flex-1">
+                <Label htmlFor="demoMode" className="cursor-pointer text-sm sm:text-base">
+                  Demo Mode
+                </Label>
+                <p className="text-xs text-gray-500 mt-1 hidden sm:block">
+                  No credentials required
+                </p>
+              </div>
+              <Switch
+                id="demoMode"
+                checked={useDemo}
+                onCheckedChange={setUseDemo}
+                disabled={isValidating || isConnecting}
+              />
+            </div>
+          )}
+          
+          {broker === 'exness' && (
+            <div className="p-3 sm:p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+              <p className="text-xs sm:text-sm text-blue-400">
+                ℹ️ <span className="font-semibold">Exness Connection:</span> MT5 credentials are required. Demo mode is not available for Exness.
               </p>
             </div>
-            <Switch
-              id="demoMode"
-              checked={useDemo}
-              onCheckedChange={setUseDemo}
-              disabled={isValidating || isConnecting}
-            />
-          </div>
+          )}
 
-          {/* Exness MT5 Fields (only show if not using demo and Exness is selected) */}
-          {!useDemo && broker === 'exness' && (
+          {/* Exness MT5 Fields (always required for Exness) */}
+          {broker === 'exness' && (
             <div className="space-y-4 p-3 sm:p-4 bg-gray-800/50 rounded-lg border border-gray-700">
               <div className="flex items-center gap-2 mb-2">
                 <h3 className="text-sm sm:text-base font-semibold text-gray-200">Exness MT5 Credentials</h3>
@@ -464,13 +537,34 @@ export default function BrokerConnectionModal() {
             </div>
           )}
 
-          {/* Connected Status */}
+          {/* Connected Status with Disconnect Button */}
           {connectedBroker && (
-            <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
-              <CheckCircle2 className="h-4 w-4 text-green-400" />
-              <span className="text-sm text-green-400">
-                Connected to {connectedBroker.toUpperCase()}
-              </span>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                <CheckCircle2 className="h-4 w-4 text-green-400" />
+                <span className="text-sm text-green-400 flex-1">
+                  Connected to {connectedBroker.toUpperCase()}
+                </span>
+              </div>
+              
+              {/* Disconnect Button - Prominent */}
+              <Button
+                onClick={handleDisconnect}
+                disabled={isValidating || isConnecting}
+                variant="destructive"
+                className="w-full text-sm sm:text-base py-2 sm:py-3"
+              >
+                <AlertCircle className="mr-2 h-4 w-4" />
+                <span className="hidden sm:inline">Disconnect from {connectedBroker.toUpperCase()}</span>
+                <span className="sm:hidden">Disconnect</span>
+              </Button>
+              
+              {/* Warning Message */}
+              <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                <p className="text-xs sm:text-sm text-yellow-400">
+                  ⚠️ Disconnect before connecting to a different broker
+                </p>
+              </div>
             </div>
           )}
 
@@ -479,14 +573,13 @@ export default function BrokerConnectionModal() {
             onClick={handleConnect}
             disabled={
               !broker || 
-              (!useDemo && (
-                (broker === 'exness' && (!mt5Login || !mt5Password || !mt5Server)) ||
-                (broker === 'deriv' && (!apiKey || !apiSecret))
-              )) || 
+              (connectedBroker && connectedBroker !== broker) ||
+              (broker === 'exness' && (!mt5Login || !mt5Password || !mt5Server)) ||
+              (broker === 'deriv' && !useDemo && (!apiKey || !apiSecret)) ||
               isValidating || 
               isConnecting
             }
-            className="w-full bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-semibold text-sm sm:text-base py-2 sm:py-3"
+            className="w-full bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-semibold text-sm sm:text-base py-2 sm:py-3 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isValidating || isConnecting ? (
               <>

@@ -297,3 +297,4 @@ describe('SignalistSMA3CStrategy', () => {
   });
 });
 
+

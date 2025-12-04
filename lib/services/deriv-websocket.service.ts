@@ -248,3 +248,4 @@ class DerivWebSocketService {
 export const derivWebSocketService = new DerivWebSocketService();
 
 
+

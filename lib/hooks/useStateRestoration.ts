@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 
 export function useStateRestoration() {
   const [isRestoring, setIsRestoring] = useState(true);
+  const [hasChecked, setHasChecked] = useState(false);
   const {
     connectedBroker,
     botStatus,
@@ -18,32 +19,85 @@ export function useStateRestoration() {
   } = useAutoTradingStore();
 
   useEffect(() => {
+    // Only run in browser (not SSR)
+    if (typeof window === 'undefined') {
+      setIsRestoring(false);
+      return;
+    }
+
     const restoreState = async () => {
       try {
         setIsRestoring(true);
 
         // Check server for active bots and connections
-        const response = await fetch('/api/auto-trading/status');
+        let response;
+        try {
+          response = await fetch('/api/auto-trading/status', {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+        } catch (fetchError: any) {
+          console.warn('Failed to fetch status (network error):', fetchError?.message || fetchError);
+          setIsRestoring(false);
+          return;
+        }
         
-        if (!response.ok) {
-          throw new Error('Failed to fetch status');
+        if (!response || !response.ok) {
+          console.warn('Status check failed:', response?.status || 'No response');
+          setIsRestoring(false);
+          return;
         }
 
-        const data = await response.json();
+        let data;
+        try {
+          data = await response.json();
+        } catch (parseError: any) {
+          console.warn('Failed to parse status response:', parseError?.message || parseError);
+          setIsRestoring(false);
+          return;
+        }
 
-        if (!data.success) {
-          console.warn('Status check failed:', data.error);
+        if (!data || !data.success) {
+          console.warn('Status check failed:', data?.error || 'Unknown error');
           setIsRestoring(false);
           return;
         }
 
         const { activeBots, connectedBrokers } = data.data;
 
-        // Restore broker connection if exists
-        if (connectedBrokers && connectedBrokers.length > 0) {
+        // IMPORTANT: Only restore broker connection if there's an ACTIVE BOT running
+        // This prevents auto-connecting when user hasn't explicitly started a bot
+        // We don't auto-connect just because there's a session on the server
+        
+        // Check if there's a persisted broker connection but no active bot
+        // If so, clear it to prevent showing as "connected" when not actually connected
+        if (connectedBroker && (!activeBots || activeBots.length === 0)) {
+          // There's a persisted connection but no active bot
+          // This means the user disconnected or the bot stopped
+          // We should clear the connection state to reflect reality
+          const { disconnectBroker } = useAutoTradingStore.getState();
+          disconnectBroker();
+          addLog({
+            level: 'info',
+            message: 'Cleared stale broker connection (no active bot)',
+          });
+        }
+
+        // Only restore broker connection if:
+        // 1. There's an active bot running (user explicitly started it)
+        // 2. There's a connected broker from the server
+        // 3. The local state doesn't already have a broker connected
+        // This prevents auto-connecting when user hasn't explicitly connected
+        if (activeBots && activeBots.length > 0 && connectedBrokers && connectedBrokers.length > 0) {
           const primaryBroker = connectedBrokers[0];
+          const activeBot = activeBots[0];
           
-          if (!connectedBroker) {
+          // Only restore if:
+          // - No broker is currently connected in local state, AND
+          // - The active bot's broker matches the connected broker
+          if (!connectedBroker && activeBot.broker === primaryBroker.broker) {
             try {
               // Reconnect to broker (demo mode)
               await connectBrokerDemo(primaryBroker.broker);
@@ -63,7 +117,7 @@ export function useStateRestoration() {
 
               addLog({
                 level: 'success',
-                message: `Broker connection restored: ${primaryBroker.broker.toUpperCase()}`,
+                message: `Broker connection restored: ${primaryBroker.broker.toUpperCase()} (bot is running)`,
               });
             } catch (error: any) {
               console.error('Failed to restore broker connection:', error);
@@ -120,9 +174,12 @@ export function useStateRestoration() {
       }
     };
 
-    // Only restore once on mount
-    restoreState();
-  }, []); // Empty deps - only run once
+    // Only restore once on mount, and only if we haven't checked yet
+    if (!hasChecked) {
+      setHasChecked(true);
+      restoreState();
+    }
+  }, [hasChecked]); // Only run once
 
   return { isRestoring };
 }

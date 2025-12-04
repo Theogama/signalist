@@ -103,10 +103,33 @@ export function useWebSocket() {
               }
               break;
             case 'closed_trades':
-              // Update closed trades
+              // Update closed trades - ensure they're properly moved to closedTrades array
               if (data.data && Array.isArray(data.data)) {
                 data.data.forEach((trade: any) => {
-                  updateTrade(trade.id, { ...trade, status: 'CLOSED' });
+                  // Ensure trade has all required fields for closed trade
+                  const closedTrade = {
+                    ...trade,
+                    status: (trade.status === 'OPEN' ? 'CLOSED' : trade.status) as 'CLOSED' | 'STOPPED',
+                    profitLoss: trade.profitLoss !== undefined ? trade.profitLoss : 
+                               (trade.exitPrice && trade.entryPrice ? 
+                                 (trade.side === 'BUY' ? 
+                                   (trade.exitPrice - trade.entryPrice) * trade.quantity :
+                                   (trade.entryPrice - trade.exitPrice) * trade.quantity) : 0),
+                    closedAt: trade.closedAt ? new Date(trade.closedAt) : new Date(),
+                  };
+                  updateTrade(trade.id, closedTrade);
+                });
+              }
+              break;
+            case 'trade_closed':
+              // Immediate notification when a trade closes
+              if (data.data) {
+                const trade = data.data;
+                updateTrade(trade.id, {
+                  ...trade,
+                  status: 'CLOSED',
+                  profitLoss: trade.profitLoss,
+                  closedAt: trade.closedAt ? new Date(trade.closedAt) : new Date(),
                 });
               }
               break;

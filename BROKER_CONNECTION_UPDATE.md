@@ -74,3 +74,4 @@ Updated the broker connection system to require MT5 connection for Exness accoun
 - MT5 Python service must be running for Exness connections
 - Connection ID is stored in session (should be moved to database in production)
 
+

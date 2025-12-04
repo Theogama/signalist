@@ -37,9 +37,9 @@ export async function POST(request: NextRequest) {
     let adapter: DerivAdapter | null = null;
     let accountData: any = null;
 
-    // Quick Connect for Exness - MUST use MT5
+    // Quick Connect for Exness - REQUIRES MT5 credentials (no demo mode)
     if (broker === 'exness') {
-      // Exness requires MT5 connection (login, password, server)
+      // Exness MUST have MT5 credentials
       if (connectionType !== 'mt5' || !credentials?.login || !credentials?.password || !credentials?.server) {
         return NextResponse.json(
           { success: false, error: 'Exness requires MT5 connection. Please provide login, password, and server.' },

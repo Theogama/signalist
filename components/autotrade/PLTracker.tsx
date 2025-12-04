@@ -24,6 +24,7 @@ interface PLMetrics {
 
 export default function PLTracker() {
   const { openTrades, closedTrades, connectedBroker } = useAutoTradingStore();
+  const { wsConnected } = useWebSocket();
   const [metrics, setMetrics] = useState<PLMetrics>({
     currentRunningPL: 0,
     totalWins: 0,
@@ -64,7 +65,7 @@ export default function PLTracker() {
     }
   };
 
-  // Calculate metrics from store as fallback
+  // Calculate metrics from store as fallback/real-time update
   useEffect(() => {
     // Calculate running P/L from open trades (unrealized)
     const runningPL = openTrades.reduce((sum, trade) => {
@@ -85,32 +86,49 @@ export default function PLTracker() {
     const totalTrades = closed.length;
     const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
 
-    // Update metrics from store data (fallback)
-    setMetrics(prev => ({
-      ...prev,
-      currentRunningPL: runningPL,
-      totalWins: wins,
-      totalLosses: losses,
-      winRate: winRate,
-      totalTrades: totalTrades,
-      totalProfitLoss: totalProfitLoss,
-      openPositions: openTrades.length,
-    }));
+    // Update metrics from store data (real-time fallback while API loads)
+    // Only update if we have data, otherwise keep API data
+    if (openTrades.length > 0 || closedTrades.length > 0) {
+      setMetrics(prev => ({
+        ...prev,
+        currentRunningPL: runningPL,
+        totalWins: wins,
+        totalLosses: losses,
+        winRate: winRate,
+        totalTrades: totalTrades,
+        totalProfitLoss: totalProfitLoss,
+        openPositions: openTrades.length,
+      }));
+    }
   }, [openTrades, closedTrades]);
 
   // Fetch from API on mount and periodically
   useEffect(() => {
-    fetchPLMetrics();
-    const interval = setInterval(fetchPLMetrics, 5000); // Update every 5 seconds
-    return () => clearInterval(interval);
-  }, [connectedBroker]);
-
-  // Refresh when broker connects
-  useEffect(() => {
-    if (connectedBroker) {
-      fetchPLMetrics();
+    if (!connectedBroker) {
+      setMetrics(prev => ({ ...prev, isLoading: false }));
+      return;
     }
+    
+    fetchPLMetrics();
+    // Update every 3 seconds for real-time feel
+    const interval = setInterval(fetchPLMetrics, 3000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedBroker]);
+  
+  // Refresh when trades change (real-time updates from WebSocket)
+  useEffect(() => {
+    if (wsConnected && connectedBroker && (openTrades.length > 0 || closedTrades.length > 0)) {
+      // When WebSocket receives trade updates, refresh P/L metrics
+      // This ensures real-time updates when trades are opened/closed
+      const refreshTimeout = setTimeout(() => {
+        fetchPLMetrics();
+      }, 1000); // Small delay to let store update first
+      
+      return () => clearTimeout(refreshTimeout);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTrades.length, closedTrades.length, wsConnected, connectedBroker]);
 
   if (metrics.isLoading) {
     return (
@@ -135,14 +153,26 @@ export default function PLTracker() {
             Profit & Loss Tracker
           </div>
           <button
-            onClick={fetchPLMetrics}
-            className="p-1 hover:bg-gray-800 rounded transition-colors"
+            onClick={() => {
+              setMetrics(prev => ({ ...prev, isLoading: true }));
+              fetchPLMetrics();
+            }}
+            className="p-1 hover:bg-gray-800 rounded transition-colors disabled:opacity-50"
             title="Refresh metrics"
+            disabled={metrics.isLoading}
           >
-            <RefreshCw className="h-4 w-4 text-gray-400" />
+            <RefreshCw className={`h-4 w-4 text-gray-400 ${metrics.isLoading ? 'animate-spin' : ''}`} />
           </button>
         </CardTitle>
-        <CardDescription>Real-time trading performance metrics</CardDescription>
+        <CardDescription>
+          Real-time trading performance metrics
+          {wsConnected && (
+            <span className="ml-2 inline-flex items-center gap-1 text-green-400 text-xs">
+              <Activity className="h-3 w-3 animate-pulse" />
+              Live
+            </span>
+          )}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

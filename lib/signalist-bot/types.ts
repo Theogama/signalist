@@ -283,3 +283,4 @@ export type BotEvent =
   | { type: 'status_update'; status: BotStatus; timestamp: Date }
   | { type: 'candle_processed'; candle: Candle; timestamp: Date };
 
+

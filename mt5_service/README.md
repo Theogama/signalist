@@ -85,3 +85,4 @@ python main.py
 - All trades use magic number 2025 by default
 - All trades have comment "SIGNALIST Bot"
 
+

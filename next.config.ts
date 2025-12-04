@@ -10,8 +10,8 @@ const nextConfig: NextConfig = {
   productionBrowserSourceMaps: false,
   // Turbopack configuration (Next.js 16+ uses Turbopack by default)
   turbopack: {
-    // Empty config to silence the warning
-    // Turbopack handles source maps automatically
+    // Set root directory to silence workspace root warning
+    root: process.cwd(),
   },
 };
 

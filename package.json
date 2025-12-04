@@ -41,11 +41,12 @@
     "react-select-country-list": "^2.2.3",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
-    "zustand": "^5.0.8"
+    "zustand": "^5.0.8",
+    "@tailwindcss/postcss": "^4",
+    "postcss": "^8.4.47"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/nodemailer": "^7.0.1",
     "@types/react": "^19",
@@ -53,6 +54,7 @@
     "@types/react-select-country-list": "^2.2.3",
     "eslint": "^9",
     "eslint-config-next": "^16.0.7",
+    "postcss": "^8.4.47",
     "shadcn-ui": "^0.9.5",
     "tailwindcss": "^4",
     "ts-node": "^10.9.2",

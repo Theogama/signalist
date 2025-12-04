@@ -13,10 +13,21 @@ export const getAuth = async () => {
 
     if(!db) throw new Error('MongoDB connection not found');
 
+    // Get base URL - use Vercel URL if available, otherwise use env or fallback
+    const baseURL = process.env.BETTER_AUTH_URL || 
+                   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined) ||
+                   process.env.NEXT_PUBLIC_APP_URL ||
+                   'http://localhost:3000';
+
+    // Validate required environment variables
+    if (!process.env.BETTER_AUTH_SECRET) {
+        console.warn('BETTER_AUTH_SECRET is not set. Authentication may not work correctly.');
+    }
+
     authInstance = betterAuth({
         database: mongodbAdapter(db as any),
-        secret: process.env.BETTER_AUTH_SECRET,
-        baseURL: process.env.BETTER_AUTH_URL,
+        secret: process.env.BETTER_AUTH_SECRET || 'fallback-secret-change-in-production',
+        baseURL: baseURL,
         emailAndPassword: {
             enabled: true,
             disableSignUp: false,
@@ -31,4 +42,24 @@ export const getAuth = async () => {
     return authInstance;
 }
 
-export const auth = await getAuth();
+// Lazy initialization - don't await at module level to avoid build issues
+export const auth = {
+    api: {
+        getSession: async (options: any) => {
+            const authInstance = await getAuth();
+            return authInstance.api.getSession(options);
+        },
+        signIn: async (options: any) => {
+            const authInstance = await getAuth();
+            return authInstance.api.signIn(options);
+        },
+        signUp: async (options: any) => {
+            const authInstance = await getAuth();
+            return authInstance.api.signUp(options);
+        },
+        signOut: async (options: any) => {
+            const authInstance = await getAuth();
+            return authInstance.api.signOut(options);
+        },
+    },
+};

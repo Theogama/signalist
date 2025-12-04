@@ -1,21 +1,17 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
+  // ESLint is now configured via eslint.config.js or .eslintrc
+  // Remove eslint config from here for Next.js 16+
   typescript: {
     ignoreBuildErrors: true,
   },
-  // Disable source maps in development to avoid source map parsing errors
+  // Disable source maps in production to avoid source map parsing errors
   productionBrowserSourceMaps: false,
-  // Configure webpack to handle source maps better
-  webpack: (config, { dev, isServer }) => {
-    // Disable source maps in development to prevent parsing errors
-    if (dev) {
-      config.devtool = false;
-    }
-    return config;
+  // Turbopack configuration (Next.js 16+ uses Turbopack by default)
+  turbopack: {
+    // Empty config to silence the warning
+    // Turbopack handles source maps automatically
   },
 };
 

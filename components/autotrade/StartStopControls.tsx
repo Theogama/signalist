@@ -5,9 +5,10 @@
  * Controls for starting and stopping the trading bot
  */
 
+import { useState, useEffect } from 'react';
 import { useAutoTradingStore } from '@/lib/stores/autoTradingStore';
 import { Button } from '@/components/ui/button';
-import { Play, Square, Loader2, AlertCircle } from 'lucide-react';
+import { Play, Square, Loader2, AlertCircle, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function StartStopControls() {
@@ -20,6 +21,7 @@ export default function StartStopControls() {
     botStartTime,
     startBot,
     stopBot,
+    wsConnected,
   } = useAutoTradingStore();
 
   const isRunning = botStatus === 'running';
@@ -49,25 +51,45 @@ export default function StartStopControls() {
     }
   };
 
-  const getUptime = () => {
-    if (!botStartTime) return '0s';
+  // PRIORITY: Real-time uptime calculation (updates every second)
+  const [uptime, setUptime] = useState('0s');
+  
+  useEffect(() => {
+    if (!isRunning || !botStartTime) {
+      setUptime('0s');
+      return;
+    }
     
-    // Handle both Date objects and string dates (from localStorage)
-    const startTime = botStartTime instanceof Date 
-      ? botStartTime 
-      : new Date(botStartTime);
+    const updateUptime = () => {
+      const startTime = botStartTime instanceof Date 
+        ? botStartTime 
+        : new Date(botStartTime);
+      
+      if (isNaN(startTime.getTime())) {
+        setUptime('0s');
+        return;
+      }
+      
+      const seconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      
+      if (hours > 0) {
+        setUptime(`${hours}h ${minutes % 60}m`);
+      } else if (minutes > 0) {
+        setUptime(`${minutes}m ${seconds % 60}s`);
+      } else {
+        setUptime(`${seconds}s`);
+      }
+    };
     
-    // Check if date is valid
-    if (isNaN(startTime.getTime())) return '0s';
-    
-    const seconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    
-    if (hours > 0) return `${hours}h ${minutes % 60}m`;
-    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
-    return `${seconds}s`;
-  };
+    updateUptime();
+    // Update every second for real-time feel
+    const interval = setInterval(updateUptime, 1000);
+    return () => clearInterval(interval);
+  }, [isRunning, botStartTime]);
+  
+  const getUptime = () => uptime;
 
   return (
     <div className="space-y-4">
@@ -84,10 +106,21 @@ export default function StartStopControls() {
           </span>
         </div>
         {isRunning && botStartTime && (
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-400">Uptime</span>
-            <span className="text-sm text-gray-100">{getUptime()}</span>
-          </div>
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">Uptime</span>
+              <span className="text-sm text-gray-100">{getUptime()}</span>
+            </div>
+            {connectedBroker && wsConnected && (
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-700">
+                <span className="text-xs text-gray-500">Update Speed</span>
+                <span className="text-xs text-yellow-400 flex items-center gap-1">
+                  <Activity className="h-3 w-3 animate-pulse" />
+                  ⚡ Fast ({connectedBroker.toUpperCase()})
+                </span>
+              </div>
+            )}
+          </>
         )}
       </div>
 

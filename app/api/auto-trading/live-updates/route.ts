@@ -84,7 +84,13 @@ export async function GET(request: NextRequest) {
           }
         });
 
-        // Set up interval to send updates
+        // Track last update times for different update types
+        let lastTradeUpdate = 0;
+        let lastBalanceUpdate = 0;
+        const TRADE_UPDATE_INTERVAL = 500; // 500ms for trade updates (high priority)
+        const BALANCE_UPDATE_INTERVAL = 1000; // 1s for balance updates (lower priority)
+
+        // Set up interval to send updates with prioritized timing
         interval = setInterval(async () => {
           try {
             const activeBots = botManager.getUserBots(userId);
@@ -93,12 +99,30 @@ export async function GET(request: NextRequest) {
               return;
             }
 
+            const now = Date.now();
+            const shouldUpdateTrades = now - lastTradeUpdate >= TRADE_UPDATE_INTERVAL;
+            const shouldUpdateBalance = now - lastBalanceUpdate >= BALANCE_UPDATE_INTERVAL;
+
             // Collect updates from all active bots
             let totalBalance = 0;
             let totalEquity = 0;
             let totalMargin = 0;
             const openTrades: any[] = [];
             const closedTrades: any[] = [];
+
+            // PRIORITY: Fetch Deriv trades from database if Deriv is connected
+            if (shouldUpdateTrades) {
+              try {
+                const { syncDerivPositions } = await import('@/lib/services/deriv-trading.service');
+                const derivPositions = await syncDerivPositions(userId, '');
+                if (derivPositions.openTrades.length > 0 || derivPositions.closedTrades.length > 0) {
+                  openTrades.push(...derivPositions.openTrades);
+                  closedTrades.push(...derivPositions.closedTrades);
+                }
+              } catch (error) {
+                console.error('[Live Updates] Error fetching Deriv positions:', error);
+              }
+            }
 
             for (const bot of activeBots) {
               if (bot.paperTrader) {
@@ -107,72 +131,111 @@ export async function GET(request: NextRequest) {
                 totalEquity += balance.equity;
                 totalMargin += balance.margin;
 
-                // Get open positions as trades with current P/L
-                const openPositions = bot.paperTrader.getOpenPositions();
-                openTrades.push(...openPositions.map((p) => {
-                  // Calculate current P/L
-                  const currentPrice = p.position.currentPrice || p.position.entryPrice;
-                  let currentPnl = 0;
-                  if (p.position.side === 'BUY') {
-                    currentPnl = (currentPrice - p.position.entryPrice) * p.position.quantity;
-                  } else {
-                    currentPnl = (p.position.entryPrice - currentPrice) * p.position.quantity;
-                  }
-                  
-                  return {
-                    id: p.tradeId,
-                    symbol: p.position.symbol || bot.instrument,
-                    side: p.position.side || 'BUY',
-                    entryPrice: p.position.entryPrice,
-                    quantity: p.position.quantity,
-                    status: 'OPEN' as const,
-                    openedAt: p.position.openedAt || new Date(),
-                    profitLoss: currentPnl,
-                    exitPrice: currentPrice,
-                    currentPrice,
-                  };
-                }));
+                // PRIORITY: Get open positions as trades with current P/L (updated frequently)
+                if (shouldUpdateTrades) {
+                  const openPositions = bot.paperTrader.getOpenPositions();
+                  openTrades.push(...openPositions.map((p) => {
+                    // Calculate current P/L
+                    const currentPrice = p.position.currentPrice || p.position.entryPrice;
+                    let currentPnl = 0;
+                    if (p.position.side === 'BUY') {
+                      currentPnl = (currentPrice - p.position.entryPrice) * p.position.quantity;
+                    } else {
+                      currentPnl = (p.position.entryPrice - currentPrice) * p.position.quantity;
+                    }
+                    
+                    return {
+                      id: p.tradeId,
+                      symbol: p.position.symbol || bot.instrument,
+                      side: p.position.side || 'BUY',
+                      entryPrice: p.position.entryPrice,
+                      quantity: p.position.quantity,
+                      status: 'OPEN' as const,
+                      openedAt: p.position.openedAt || new Date(),
+                      profitLoss: currentPnl,
+                      exitPrice: currentPrice,
+                      currentPrice,
+                    };
+                  }));
 
-                // Get closed trades from history
-                const history = bot.paperTrader.getHistory();
-                const recentClosed = history.slice(-10).map((trade) => ({
-                  id: trade.tradeId,
-                  symbol: trade.symbol,
-                  side: trade.side,
-                  entryPrice: trade.entryPrice,
-                  exitPrice: trade.exitPrice,
-                  quantity: trade.quantity,
-                  profitLoss: trade.profitLoss,
-                  status: trade.status === 'TAKE_PROFIT' ? 'CLOSED' as const : 
-                          trade.status === 'STOPPED' ? 'STOPPED' as const : 'CLOSED' as const,
-                  openedAt: trade.openedAt,
-                  closedAt: trade.closedAt,
-                }));
-                
-                // Detect new closed trades and send immediate events
-                recentClosed.forEach((trade) => {
-                  if (!previousClosedTradeIds.has(trade.id)) {
-                    // New closed trade - send immediate event
-                    controller.enqueue(
-                      encoder.encode(
-                        `data: ${JSON.stringify({
-                          type: 'trade_closed',
-                          data: trade,
-                        })}\n\n`
-                      )
-                    );
-                    previousClosedTradeIds.add(trade.id);
-                  }
-                });
-                
-                closedTrades.push(...recentClosed);
+                  // PRIORITY: Get closed trades from history (check for new ones immediately)
+                  const history = bot.paperTrader.getHistory();
+                  const recentClosed = history.slice(-20).map((trade) => ({
+                    id: trade.tradeId,
+                    symbol: trade.symbol,
+                    side: trade.side,
+                    entryPrice: trade.entryPrice,
+                    exitPrice: trade.exitPrice,
+                    quantity: trade.quantity,
+                    profitLoss: trade.profitLoss,
+                    status: trade.status === 'TAKE_PROFIT' ? 'CLOSED' as const : 
+                            trade.status === 'STOPPED' ? 'STOPPED' as const : 'CLOSED' as const,
+                    openedAt: trade.openedAt,
+                    closedAt: trade.closedAt,
+                  }));
+                  
+                  // IMMEDIATE: Detect new closed trades and send instant events
+                  recentClosed.forEach((trade) => {
+                    if (!previousClosedTradeIds.has(trade.id)) {
+                      // New closed trade - send IMMEDIATE event (highest priority)
+                      controller.enqueue(
+                        encoder.encode(
+                          `data: ${JSON.stringify({
+                            type: 'trade_closed',
+                            data: trade,
+                            priority: 'high',
+                            timestamp: Date.now(),
+                          })}\n\n`
+                        )
+                      );
+                      previousClosedTradeIds.add(trade.id);
+                    }
+                  });
+                  
+                  closedTrades.push(...recentClosed);
+                }
               }
             }
 
-            // Send balance update (get fresh balance from PaperTrader)
-            // Aggregate balance from all active bots
-            if (activeBots.length > 0) {
-              // Use aggregated totals if we have them, otherwise get from first bot
+            // PRIORITY: Send open trades update (every 500ms when trades exist)
+            if (shouldUpdateTrades && openTrades.length > 0) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    type: 'open_trades',
+                    data: openTrades,
+                    priority: 'high',
+                    timestamp: Date.now(),
+                  })}\n\n`
+                )
+              );
+              lastTradeUpdate = now;
+            }
+
+            // PRIORITY: Send position updates for open trades (real-time P/L)
+            if (shouldUpdateTrades) {
+              openTrades.forEach((trade) => {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: 'position_update',
+                      data: {
+                        id: trade.id,
+                        tradeId: trade.id,
+                        currentPnl: trade.profitLoss,
+                        profitLoss: trade.profitLoss,
+                        currentPrice: trade.exitPrice,
+                      },
+                      priority: 'high',
+                      timestamp: Date.now(),
+                    })}\n\n`
+                  )
+                );
+              });
+            }
+
+            // Send balance update (less frequent - every 1s)
+            if (shouldUpdateBalance && activeBots.length > 0) {
               let balanceToSend;
               if (totalBalance > 0) {
                 balanceToSend = {
@@ -206,28 +269,23 @@ export async function GET(request: NextRequest) {
                   `data: ${JSON.stringify({
                     type: 'balance',
                     data: balanceToSend,
+                    priority: 'normal',
+                    timestamp: Date.now(),
                   })}\n\n`
                 )
               );
+              lastBalanceUpdate = now;
             }
 
-            // Send open trades update
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  type: 'open_trades',
-                  data: openTrades,
-                })}\n\n`
-              )
-            );
-
             // Send closed trades update (only if there are new ones)
-            if (closedTrades.length > 0) {
+            if (shouldUpdateTrades && closedTrades.length > 0) {
               controller.enqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({
                     type: 'closed_trades',
                     data: closedTrades,
+                    priority: 'high',
+                    timestamp: Date.now(),
                   })}\n\n`
                 )
               );
@@ -235,7 +293,7 @@ export async function GET(request: NextRequest) {
           } catch (error) {
             console.error('Error sending live update:', error);
           }
-        }, 2000); // Update every 2 seconds
+        }, 250); // Check every 250ms, but send updates based on priority intervals
       },
       cancel() {
         // Cleanup on close

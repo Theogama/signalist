@@ -76,7 +76,9 @@ export default function LiveStatsCards() {
             <div className="flex items-center gap-2">
               <Activity className="h-5 w-5 text-blue-400" />
               {persistentStats && (
-                <Database className="h-3 w-3 text-green-400" title="Persistent data" />
+                <span title="Persistent data">
+                  <Database className="h-3 w-3 text-green-400" />
+                </span>
               )}
             </div>
           </div>
@@ -99,7 +101,9 @@ export default function LiveStatsCards() {
             <div className="flex items-center gap-2">
               <TrendingUp className="h-5 w-5 text-green-400" />
               {persistentStats && (
-                <Database className="h-3 w-3 text-green-400" title="Persistent data" />
+                <span title="Persistent data">
+                  <Database className="h-3 w-3 text-green-400" />
+                </span>
               )}
             </div>
           </div>

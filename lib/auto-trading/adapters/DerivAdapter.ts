@@ -672,7 +672,7 @@ export class DerivAdapter extends BaseAdapter {
   }
 
   /**
-   * Place order via WebSocket
+   * Place order via WebSocket using Deriv API format
    */
   private async placeOrderViaWebSocket(request: OrderRequest, mappedSymbol: string): Promise<OrderResponse> {
     return new Promise((resolve, reject) => {
@@ -688,7 +688,7 @@ export class DerivAdapter extends BaseAdapter {
           const data = JSON.parse(event.data);
           
           // Check if this is the response to our buy request
-          if (data.buy && data.req_id === reqId) {
+          if (data.buy && (data.req_id === reqId || data.echo_req?.req_id === reqId)) {
             clearTimeout(timeout);
             this.wsConnection?.removeEventListener('message', messageHandler);
             
@@ -721,14 +721,19 @@ export class DerivAdapter extends BaseAdapter {
 
       this.wsConnection?.addEventListener('message', messageHandler);
 
-      // Send buy request via WebSocket
+      // Send buy request via WebSocket using Deriv API format
+      // Deriv API expects: { buy: contract_id, price: amount, parameters: {...} }
       this.sendWebSocketMessage({
-        buy: mappedSymbol,
-        price: request.price || 0,
-        amount: request.quantity,
-        duration: 5,
-        duration_unit: 't',
-        contract_type: request.side === 'BUY' ? 'CALL' : 'PUT',
+        buy: reqId,
+        price: request.quantity, // Amount/stake
+        parameters: {
+          contract_type: request.side === 'BUY' ? 'CALL' : 'PUT',
+          symbol: mappedSymbol,
+          amount: request.quantity,
+          duration: request.duration || 5,
+          duration_unit: 't', // ticks
+          basis: 'stake', // or 'payout'
+        },
         req_id: reqId,
       });
     });

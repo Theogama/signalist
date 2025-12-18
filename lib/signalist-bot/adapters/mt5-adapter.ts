@@ -158,7 +158,7 @@ export class MT5Adapter implements UnifiedBrokerAdapter {
     const key = `${symbol}_${timeframe}`;
     this.candleCallbacks.set(key, callback);
 
-    // Poll for new candles every 30 seconds
+    // Poll for new candles every 2 seconds for faster updates
     const intervalId = setInterval(async () => {
       try {
         const candles = await this.getHistoricalCandles(symbol, timeframe, 1);
@@ -168,7 +168,7 @@ export class MT5Adapter implements UnifiedBrokerAdapter {
       } catch (error) {
         console.error(`[MT5Adapter] Error polling candles for ${symbol}:`, error);
       }
-    }, 30000);
+    }, 2000);
 
     return () => {
       clearInterval(intervalId);
@@ -177,9 +177,36 @@ export class MT5Adapter implements UnifiedBrokerAdapter {
   }
 
   async getHistoricalCandles(symbol: string, timeframe: Timeframe, count: number): Promise<Candle[]> {
-    // This would need to be implemented in MT5 service
-    // For now, return empty array - MT5 service needs to add candle history endpoint
-    return [];
+    if (!this.connectionId) {
+      throw new Error('Not connected');
+    }
+
+    try {
+      const url = `${MT5_SERVICE_URL}/candles?connection_id=${this.connectionId}&symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&count=${count}`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to get historical candles');
+      }
+
+      const candles: Candle[] = (data.candles || []).map((c: any) => ({
+        symbol,
+        timeframe,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume || 0,
+        timestamp: new Date(c.time * 1000),
+        isClosed: true,
+      }));
+
+      return candles;
+    } catch (error: any) {
+      console.error(`[MT5Adapter] Error fetching candles:`, error);
+      throw error;
+    }
   }
 
   async placeTrade(request: UnifiedTradeRequest): Promise<UnifiedTradeResponse> {

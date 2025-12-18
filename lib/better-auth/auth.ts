@@ -49,17 +49,9 @@ export const auth = {
             const authInstance = await getAuth();
             return authInstance.api.getSession(options);
         },
-        signIn: async (options: any) => {
-            const authInstance = await getAuth();
-            return authInstance.api.signIn(options);
-        },
         signInEmail: async (options: any) => {
             const authInstance = await getAuth();
             return authInstance.api.signInEmail(options);
-        },
-        signUp: async (options: any) => {
-            const authInstance = await getAuth();
-            return authInstance.api.signUp(options);
         },
         signUpEmail: async (options: any) => {
             const authInstance = await getAuth();

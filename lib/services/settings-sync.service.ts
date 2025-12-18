@@ -85,7 +85,7 @@ class SettingsSyncService {
   /**
    * Broadcast settings update to all listening components
    */
-  private broadcastSettingsUpdate(settings: AutoTradeSettings): void {
+  broadcastSettingsUpdate(settings: AutoTradeSettings): void {
     // Use CustomEvent to broadcast settings updates
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
@@ -142,6 +142,8 @@ class SettingsSyncService {
 }
 
 export const settingsSyncService = new SettingsSyncService();
+
+
 
 
 

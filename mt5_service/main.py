@@ -380,6 +380,70 @@ class MT5Service:
         except Exception as e:
             logger.error(f"Close position error: {str(e)}")
             return {"success": False, "error": str(e)}
+    
+    def map_timeframe(self, timeframe_str: str) -> int:
+        """Map timeframe string to MT5 timeframe constant"""
+        # MT5 doesn't have native 3m timeframe, use M1 and aggregate later if needed
+        # For now, use M5 as fallback for 3m
+        mapping = {
+            '1m': mt5.TIMEFRAME_M1,
+            '3m': mt5.TIMEFRAME_M5,  # MT5 doesn't have M3, use M5 as approximation
+            '5m': mt5.TIMEFRAME_M5,
+            '15m': mt5.TIMEFRAME_M15,
+            '30m': mt5.TIMEFRAME_M30,
+            '1h': mt5.TIMEFRAME_H1,
+            '4h': mt5.TIMEFRAME_H4,
+            '1d': mt5.TIMEFRAME_D1,
+        }
+        return mapping.get(timeframe_str, mt5.TIMEFRAME_M5)
+    
+    def get_candles(
+        self,
+        connection_id: str,
+        symbol: str,
+        timeframe: str,
+        count: int
+    ) -> Dict[str, Any]:
+        """Get historical candles"""
+        try:
+            if connection_id not in self.connections:
+                return {"success": False, "error": "Not connected"}
+            
+            # Ensure symbol is selected
+            symbol_info = mt5.symbol_info(symbol)
+            if symbol_info is None:
+                return {"success": False, "error": f"Symbol {symbol} not found"}
+            
+            if not symbol_info.visible:
+                if not mt5.symbol_select(symbol, True):
+                    return {"success": False, "error": f"Failed to select symbol {symbol}"}
+            
+            # Map timeframe string to MT5 constant
+            mt5_timeframe = self.map_timeframe(timeframe)
+            
+            # Get candles using copy_rates_from_pos (faster than copy_rates_from)
+            rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, count)
+            
+            if rates is None or len(rates) == 0:
+                return {"success": True, "candles": []}
+            
+            # Convert to list of dictionaries
+            candles_list = []
+            for rate in rates:
+                candles_list.append({
+                    "time": int(rate[0]),  # Unix timestamp
+                    "open": float(rate[1]),
+                    "high": float(rate[2]),
+                    "low": float(rate[3]),
+                    "close": float(rate[4]),
+                    "volume": int(rate[5]),
+                    "spread": int(rate[6]),
+                })
+            
+            return {"success": True, "candles": candles_list}
+        except Exception as e:
+            logger.error(f"Get candles error: {str(e)}")
+            return {"success": False, "error": str(e)}
 
 # Initialize service
 mt5_service = MT5Service()
@@ -563,6 +627,31 @@ def close_position():
         return jsonify(result)
     except Exception as e:
         logger.error(f"Close position error: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/candles', methods=['GET'])
+def get_candles():
+    """Get historical candles"""
+    try:
+        connection_id = request.args.get('connection_id')
+        symbol = request.args.get('symbol')
+        timeframe = request.args.get('timeframe', '5m')
+        count = request.args.get('count', '100')
+        
+        if not connection_id:
+            return jsonify({"success": False, "error": "Missing connection_id"}), 400
+        if not symbol:
+            return jsonify({"success": False, "error": "Missing symbol"}), 400
+        
+        result = mt5_service.get_candles(
+            connection_id=connection_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            count=int(count)
+        )
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Get candles error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == '__main__':

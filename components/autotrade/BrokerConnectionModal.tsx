@@ -28,6 +28,7 @@ import {
 import { AlertCircle, CheckCircle2, Loader2, Zap, Key, ArrowLeft, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
+import DerivAccountCreator from './DerivAccountCreator';
 
 export default function BrokerConnectionModal() {
   const [open, setOpen] = useState(false);
@@ -51,28 +52,6 @@ export default function BrokerConnectionModal() {
     setBalance,
   } = useAutoTradingStore();
 
-  const handleDerivOAuth = async (accountType: 'demo' | 'real' = 'real') => {
-    // Check if already connected to a different broker
-    if (connectedBroker && connectedBroker !== 'deriv') {
-      toast.error(`Please disconnect from ${connectedBroker.toUpperCase()} first before connecting to Deriv`);
-      return;
-    }
-
-    try {
-      setIsValidating(true);
-      
-      // Redirect to Deriv OAuth authentication page
-      const authUrl = `/api/auto-trading/deriv/auth?account_type=${accountType}`;
-      window.location.href = authUrl;
-      
-      // Note: User will be redirected back after authentication
-      // The callback handler will update the store and redirect to autotrade page
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to initiate Deriv authentication');
-      setIsValidating(false);
-    }
-  };
-
   const handleQuickConnect = async (selectedBroker: BrokerType, connectionType: 'oauth2' | 'quick_connect' = 'quick_connect') => {
     if (!selectedBroker) return;
 
@@ -82,23 +61,17 @@ export default function BrokerConnectionModal() {
       return;
     }
 
-    // For Deriv, use OAuth flow instead of quick connect
-    if (selectedBroker === 'deriv') {
-      await handleDerivOAuth('demo');
-      return;
-    }
-
     try {
       setIsValidating(true);
       
-      // Use quick connect API endpoint for other brokers
+      // Use quick connect API endpoint
       const response = await fetch('/api/auto-trading/quick-connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           broker: selectedBroker,
           connectionType: selectedBroker === 'exness' ? 'oauth2' : 'quick_connect',
-          credentials: connectionType === 'oauth2' ? {} : {},
+          credentials: connectionType === 'oauth2' ? {} : {}, // OAuth2 flow would have code here
         }),
       });
 
@@ -407,31 +380,14 @@ export default function BrokerConnectionModal() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => handleDerivOAuth('demo')}
+              onClick={() => handleConnectDemo('deriv')}
               disabled={isValidating || isConnecting}
               className="flex items-center justify-center gap-2 text-sm sm:text-base"
             >
               <Zap className="h-4 w-4" />
-              <span className="hidden sm:inline">Connect Deriv (Demo)</span>
+              <span className="hidden sm:inline">Quick Connect Deriv (Demo)</span>
               <span className="sm:hidden">Deriv Demo</span>
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => handleDerivOAuth('real')}
-              disabled={isValidating || isConnecting}
-              className="flex items-center justify-center gap-2 text-sm sm:text-base border-green-500/50 hover:border-green-500"
-            >
-              <Zap className="h-4 w-4" />
-              <span className="hidden sm:inline">Connect Deriv (Real)</span>
-              <span className="sm:hidden">Deriv Real</span>
-            </Button>
-          </div>
-          
-          {/* OAuth Info */}
-          <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-            <p className="text-xs text-blue-400">
-              🔐 <span className="font-semibold">Secure OAuth:</span> Deriv authentication uses official Deriv OAuth2 flow. You'll be redirected to Deriv's secure login page.
-            </p>
           </div>
 
           <div className="relative">
@@ -534,43 +490,62 @@ export default function BrokerConnectionModal() {
           )}
 
           {/* Deriv API Key Fields (only show if not using demo and Deriv is selected) */}
-          {!useDemo && broker === 'deriv' && (
-            <div className="space-y-4 p-3 sm:p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-              <div className="flex items-center gap-2 mb-2">
-                <h3 className="text-sm sm:text-base font-semibold text-gray-200">Deriv API Credentials</h3>
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="apiKey" className="text-sm">API Key</Label>
-                <Input
-                  id="apiKey"
-                  type="password"
-                  placeholder="Enter your API key"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  disabled={isValidating || isConnecting}
-                  className="bg-gray-900 text-sm sm:text-base"
-                />
-                <p className="text-xs text-gray-500">
-                  Use API keys with TRADE-ONLY permissions
-                </p>
+          {broker === 'deriv' && (
+            <div className="space-y-4">
+              {/* Account Creator Feature */}
+              <div className="p-3 sm:p-4 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border border-blue-500/20 rounded-lg">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <h3 className="text-sm sm:text-base font-semibold text-gray-200 mb-1">
+                      Don't have a Deriv account?
+                    </h3>
+                    <p className="text-xs text-gray-400 mb-3">
+                      Create a new Deriv account directly from here. Supports demo accounts, real accounts (EU/Non-EU), and wallet accounts.
+                    </p>
+                    <DerivAccountCreator />
+                  </div>
+                </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="apiSecret" className="text-sm">API Secret</Label>
-                <Input
-                  id="apiSecret"
-                  type="password"
-                  placeholder="Enter your API secret"
-                  value={apiSecret}
-                  onChange={(e) => setApiSecret(e.target.value)}
-                  disabled={isValidating || isConnecting}
-                  className="bg-gray-900 text-sm sm:text-base"
-                />
-                <p className="text-xs text-gray-500">
-                  Never share your API secret with anyone
-                </p>
-              </div>
+              {!useDemo && (
+                <div className="space-y-4 p-3 sm:p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <h3 className="text-sm sm:text-base font-semibold text-gray-200">Deriv API Credentials</h3>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="apiKey" className="text-sm">API Key / OAuth Token</Label>
+                    <Input
+                      id="apiKey"
+                      type="password"
+                      placeholder="Enter your API key or OAuth token"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      disabled={isValidating || isConnecting}
+                      className="bg-gray-900 text-sm sm:text-base"
+                    />
+                    <p className="text-xs text-gray-500">
+                      Use API keys with TRADE-ONLY permissions or OAuth token from account creation
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="apiSecret" className="text-sm">API Secret</Label>
+                    <Input
+                      id="apiSecret"
+                      type="password"
+                      placeholder="Enter your API secret (if using API keys)"
+                      value={apiSecret}
+                      onChange={(e) => setApiSecret(e.target.value)}
+                      disabled={isValidating || isConnecting}
+                      className="bg-gray-900 text-sm sm:text-base"
+                    />
+                    <p className="text-xs text-gray-500">
+                      Required only if using API keys. OAuth tokens don't need a secret.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

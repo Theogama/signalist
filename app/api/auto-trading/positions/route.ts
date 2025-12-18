@@ -44,6 +44,16 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // Check if user has Deriv trades in database
+    const { syncDerivPositions } = await import('@/lib/services/deriv-trading.service');
+    const derivPositions = await syncDerivPositions(userId, ''); // API key not needed for DB fetch
+    
+    if (derivPositions.openTrades.length > 0 || derivPositions.closedTrades.length > 0) {
+      // Add Deriv trades
+      openTrades.push(...derivPositions.openTrades);
+      closedTrades.push(...derivPositions.closedTrades);
+    }
+
     for (const bot of activeBots) {
       if (bot.paperTrader) {
         // Get fresh balance (recalculates equity with current market prices)

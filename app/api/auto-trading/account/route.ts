@@ -171,6 +171,7 @@ export async function GET(request: NextRequest) {
         } else {
           // Create default account if doesn't exist (use upsert to handle duplicates)
           try {
+            // Use findOneAndUpdate with upsert to atomically create or get existing account
             const newAccount = await DemoAccount.findOneAndUpdate(
               { userId: session.user.id, broker: brokerType },
               {
@@ -191,37 +192,34 @@ export async function GET(request: NextRequest) {
                 upsert: true,
                 new: true,
                 setDefaultsOnInsert: true,
+                runValidators: false, // Skip validation to avoid issues
               }
             );
 
-            balanceData = {
-              balance: newAccount.balance,
-              equity: newAccount.equity,
-              margin: newAccount.margin,
-              freeMargin: newAccount.freeMargin,
-              currency: newAccount.currency,
-            };
-          } catch (createError: any) {
-            // Handle duplicate key error - account already exists, just load it
-            if (createError.code === 11000 || createError.message?.includes('duplicate key')) {
-              try {
-                const existingAccount = await DemoAccount.findOne({ 
-                  userId: session.user.id, 
-                  broker: brokerType 
-                });
-                if (existingAccount) {
-                  balanceData = {
-                    balance: existingAccount.balance,
-                    equity: existingAccount.equity,
-                    margin: existingAccount.margin,
-                    freeMargin: existingAccount.freeMargin,
-                    currency: existingAccount.currency,
-                  };
-                } else {
-                  throw createError; // Re-throw if we can't find it
-                }
-              } catch (loadError) {
-                console.error('Error loading existing account after duplicate key error:', loadError);
+            if (newAccount) {
+              balanceData = {
+                balance: newAccount.balance,
+                equity: newAccount.equity,
+                margin: newAccount.margin,
+                freeMargin: newAccount.freeMargin,
+                currency: newAccount.currency,
+              };
+            } else {
+              // If upsert didn't return a document, try to find it (race condition handling)
+              const foundAccount = await DemoAccount.findOne({ 
+                userId: session.user.id, 
+                broker: brokerType 
+              }).lean();
+              
+              if (foundAccount) {
+                balanceData = {
+                  balance: foundAccount.balance,
+                  equity: foundAccount.equity,
+                  margin: foundAccount.margin,
+                  freeMargin: foundAccount.freeMargin,
+                  currency: foundAccount.currency,
+                };
+              } else {
                 // Fallback to default values
                 balanceData = {
                   balance: 10000,
@@ -231,9 +229,38 @@ export async function GET(request: NextRequest) {
                   currency: 'USD',
                 };
               }
-            } else {
-              console.error('Error creating demo account:', createError);
-              // Fallback to default values
+            }
+          } catch (createError: any) {
+            // Handle any errors (including duplicate key) by trying to load existing account
+            console.error('Error creating/updating demo account:', createError);
+            
+            try {
+              const existingAccount = await DemoAccount.findOne({ 
+                userId: session.user.id, 
+                broker: brokerType 
+              }).lean();
+              
+              if (existingAccount) {
+                balanceData = {
+                  balance: existingAccount.balance,
+                  equity: existingAccount.equity,
+                  margin: existingAccount.margin,
+                  freeMargin: existingAccount.freeMargin,
+                  currency: existingAccount.currency,
+                };
+              } else {
+                // Fallback to default values if account doesn't exist
+                balanceData = {
+                  balance: 10000,
+                  equity: 10000,
+                  margin: 0,
+                  freeMargin: 10000,
+                  currency: 'USD',
+                };
+              }
+            } catch (loadError: any) {
+              // If loading also fails, use default values
+              console.error('Error loading existing account:', loadError);
               balanceData = {
                 balance: 10000,
                 equity: 10000,

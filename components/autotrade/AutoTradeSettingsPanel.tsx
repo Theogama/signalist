@@ -31,6 +31,7 @@ export interface AutoTradeSettings {
   // TP/SL
   takeProfitPercent: number;
   stopLossPercent: number;
+  slValue?: number; // For pips method
   useATRForSL?: boolean;
   atrMultiplier?: number;
   minStopLossPercent?: number;
@@ -194,20 +195,9 @@ export default function AutoTradeSettingsPanel({
     if (botParams) {
       setSettings((prev) => ({
         ...prev,
-        riskPercent: botParams.riskPercent || prev.riskPercent || 1,
-        lotSize: botParams.lotSize,
-        lotSizeMode: botParams.lotSizeMode || prev.lotSizeMode || 'auto',
-        maxTrades: botParams.maxTrades || prev.maxTrades || 1,
-        takeProfitPercent: botParams.takeProfitPercent || prev.takeProfitPercent || 2,
-        stopLossPercent: botParams.stopLossPercent || prev.stopLossPercent || 1,
         tradingSessionEnabled: !!(botParams.sessionStart || botParams.sessionEnd),
         sessionStart: botParams.sessionStart || prev.sessionStart || '09:00',
         sessionEnd: botParams.sessionEnd || prev.sessionEnd || '17:00',
-        martingale: botParams.martingale ?? prev.martingale ?? false,
-        martingaleMultiplier: botParams.martingaleMultiplier || prev.martingaleMultiplier || 2,
-        maxDailyLoss: botParams.maxDailyLoss ?? prev.maxDailyLoss,
-        maxDailyProfit: botParams.maxDailyProfit ?? prev.maxDailyProfit,
-        maxDailyTrades: botParams.maxDailyTrades ?? prev.maxDailyTrades,
         broker: connectedBroker || prev.broker,
         instrument: selectedInstrument?.symbol || prev.instrument,
         ...botParams,
@@ -408,8 +398,9 @@ export default function AutoTradeSettingsPanel({
                 <div className="space-y-2">
                   <Label htmlFor="riskPercent" className="flex items-center gap-2">
                     Risk Per Trade (%)
-                    <Info className="h-3 w-3 text-gray-500" title="Percentage of balance at risk per trade" />
+                    <Info className="h-3 w-3 text-gray-500" />
                   </Label>
+                  <p className="text-xs text-gray-500">Percentage of balance at risk per trade</p>
                   <Input
                     id="riskPercent"
                     type="number"

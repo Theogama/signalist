@@ -102,7 +102,7 @@ export default function PLTracker() {
     }
   }, [openTrades, closedTrades]);
 
-  // Fetch from API on mount and periodically
+  // Fetch from API on mount and periodically (optimized for Exness/Deriv)
   useEffect(() => {
     if (!connectedBroker) {
       setMetrics(prev => ({ ...prev, isLoading: false }));
@@ -110,25 +110,43 @@ export default function PLTracker() {
     }
     
     fetchPLMetrics();
-    // Update every 3 seconds for real-time feel
-    const interval = setInterval(fetchPLMetrics, 3000);
+    // PRIORITY: Faster updates for Exness/Deriv (even in demo mode)
+    // Update every 1 second for balance/metrics, but rely on WebSocket for trades
+    const interval = setInterval(fetchPLMetrics, 1000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedBroker]);
   
-  // Refresh when trades change (real-time updates from WebSocket)
+  // PRIORITY: Immediate refresh when trades change (real-time updates from WebSocket)
   useEffect(() => {
     if (wsConnected && connectedBroker && (openTrades.length > 0 || closedTrades.length > 0)) {
-      // When WebSocket receives trade updates, refresh P/L metrics
-      // This ensures real-time updates when trades are opened/closed
-      const refreshTimeout = setTimeout(() => {
-        fetchPLMetrics();
-      }, 1000); // Small delay to let store update first
-      
-      return () => clearTimeout(refreshTimeout);
+      // When WebSocket receives trade updates, refresh P/L metrics IMMEDIATELY
+      // No delay - prioritize trade updates for Exness/Deriv
+      fetchPLMetrics();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openTrades.length, closedTrades.length, wsConnected, connectedBroker]);
+  
+  // PRIORITY: Real-time P/L calculation from open trades (updates every render when trades change)
+  useEffect(() => {
+    if (!wsConnected || !connectedBroker) return;
+    
+    // Calculate running P/L immediately when trades update
+    const runningPL = openTrades.reduce((sum, trade) => {
+      const currentPrice = trade.exitPrice || trade.entryPrice;
+      const pl = trade.side === 'BUY'
+        ? (currentPrice - trade.entryPrice) * trade.quantity
+        : (trade.entryPrice - currentPrice) * trade.quantity;
+      return sum + pl;
+    }, 0);
+
+    // Update metrics immediately (no API call needed for open trades P/L)
+    setMetrics(prev => ({
+      ...prev,
+      currentRunningPL: runningPL,
+      openPositions: openTrades.length,
+    }));
+  }, [openTrades, wsConnected, connectedBroker]);
 
   if (metrics.isLoading) {
     return (
@@ -166,10 +184,11 @@ export default function PLTracker() {
         </CardTitle>
         <CardDescription>
           Real-time trading performance metrics
-          {wsConnected && (
+          {wsConnected && connectedBroker && (
             <span className="ml-2 inline-flex items-center gap-1 text-green-400 text-xs">
               <Activity className="h-3 w-3 animate-pulse" />
-              Live
+              Live ({connectedBroker.toUpperCase()})
+              <span className="text-yellow-400 ml-1">⚡ Fast Updates</span>
             </span>
           )}
         </CardDescription>

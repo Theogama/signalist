@@ -48,14 +48,15 @@ export default function LiveTradeUpdates() {
     updatesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [updates]);
 
-  // Detect trade changes and create updates
+  // PRIORITY: Immediate trade change detection (optimized for Exness/Deriv)
   useEffect(() => {
     const newUpdates: TradeUpdate[] = [];
 
-    // Check for new open trades
+    // PRIORITY: Check for new open trades (immediate detection)
     openTrades.forEach(trade => {
       const wasOpen = prevTradesRef.current.open.find(t => t.id === trade.id);
       if (!wasOpen) {
+        // IMMEDIATE: Add trade open update with high priority
         newUpdates.push({
           id: `update-${Date.now()}-${Math.random()}`,
           type: 'OPEN',
@@ -67,6 +68,26 @@ export default function LiveTradeUpdates() {
           timestamp: trade.openedAt,
           reason: `${trade.side} ${trade.symbol} opened at $${trade.entryPrice.toFixed(2)}`,
         });
+      } else {
+        // PRIORITY: Check for P/L updates on existing trades
+        const prevTrade = prevTradesRef.current.open.find(t => t.id === trade.id);
+        if (prevTrade && trade.profitLoss !== undefined && 
+            Math.abs((trade.profitLoss || 0) - (prevTrade.profitLoss || 0)) > 0.01) {
+          // Significant P/L change - add update
+          const isProfit = (trade.profitLoss || 0) > 0;
+          newUpdates.push({
+            id: `update-pl-${Date.now()}-${Math.random()}`,
+            type: isProfit ? 'WIN' : 'LOSE',
+            tradeId: trade.id,
+            symbol: trade.symbol,
+            side: trade.side,
+            price: trade.exitPrice || trade.entryPrice,
+            quantity: trade.quantity,
+            profitLoss: trade.profitLoss,
+            timestamp: new Date(),
+            reason: `P/L update: ${isProfit ? '+' : ''}$${(trade.profitLoss || 0).toFixed(2)}`,
+          });
+        }
       }
     });
 
@@ -126,15 +147,29 @@ export default function LiveTradeUpdates() {
       }
     });
 
-    // Add new updates to the list
+    // PRIORITY: Add new updates immediately (no batching for trade events)
     if (newUpdates.length > 0) {
-      setUpdates(prev => [...newUpdates, ...prev].slice(0, 100)); // Keep last 100 updates
+      // Sort by priority: CLOSE/WIN/LOSE/TP_HIT/SL_HIT first, then OPEN, then P/L updates
+      const priorityOrder: Record<TradeUpdate['type'], number> = {
+        'TP_HIT': 1,
+        'SL_HIT': 2,
+        'WIN': 3,
+        'LOSE': 4,
+        'CLOSE': 5,
+        'OPEN': 6,
+      };
+      
+      const sortedUpdates = newUpdates.sort((a, b) => 
+        (priorityOrder[a.type] || 99) - (priorityOrder[b.type] || 99)
+      );
+      
+      setUpdates(prev => [...sortedUpdates, ...prev].slice(0, 150)); // Keep last 150 updates
     }
 
-    // Update refs
+    // Update refs immediately
     prevTradesRef.current = {
-      open: [...openTrades],
-      closed: [...closedTrades],
+      open: openTrades.map(t => ({ ...t })), // Deep copy to detect changes
+      closed: closedTrades.map(t => ({ ...t })),
     };
   }, [openTrades, closedTrades, liveLogs]);
 
@@ -215,8 +250,18 @@ export default function LiveTradeUpdates() {
         <CardTitle className="flex items-center gap-2">
           <Activity className="h-5 w-5" />
           Live Trade Updates
+          {updates.length > 0 && (
+            <span className="ml-2 text-xs text-green-400 animate-pulse">
+              ⚡ Prioritized
+            </span>
+          )}
         </CardTitle>
-        <CardDescription>Real-time timeline of trading activity</CardDescription>
+        <CardDescription>
+          Real-time timeline of trading activity
+          <span className="ml-2 text-xs text-yellow-400">
+            (Updates every 500ms)
+          </span>
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="space-y-3 max-h-[600px] overflow-y-auto">

@@ -57,16 +57,19 @@ export default function BotDiagnosticsPanel() {
     blockingReasons: [],
   });
 
+  // PRIORITY: Faster diagnostics updates for Exness/Deriv
   useEffect(() => {
-    // Extract diagnostics from live logs
+    // Extract diagnostics from live logs (real-time processing)
     const analysisLogs = liveLogs.filter(log => 
       log.message.includes('Analyzing') || 
-      log.message.includes('Historical data')
+      log.message.includes('Historical data') ||
+      log.message.includes('candles')
     );
     
     if (analysisLogs.length > 0) {
       const lastLog = analysisLogs[analysisLogs.length - 1];
-      const dataMatch = lastLog.message.match(/Historical data: (\d+) candles/);
+      const dataMatch = lastLog.message.match(/Historical data: (\d+) candles/) ||
+                       lastLog.message.match(/(\d+) candles/);
       if (dataMatch) {
         setDiagnostics(prev => ({
           ...prev,
@@ -203,7 +206,14 @@ export default function BotDiagnosticsPanel() {
             </Badge>
           )}
         </CardTitle>
-        <CardDescription>Real-time bot status and health checks</CardDescription>
+        <CardDescription>
+          Real-time bot status and health checks
+          {connectedBroker && (
+            <span className="ml-2 text-xs text-yellow-400">
+              ⚡ Optimized for {connectedBroker.toUpperCase()}
+            </span>
+          )}
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Bot Status */}

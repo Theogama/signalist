@@ -5,21 +5,50 @@
  * Displays real-time bot activity logs
  */
 
-import { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { useAutoTradingStore } from '@/lib/stores/autoTradingStore';
 import { Button } from '@/components/ui/button';
 import { Trash2, AlertCircle, CheckCircle2, Info, AlertTriangle } from 'lucide-react';
 import { useTradeAlerts } from '@/lib/hooks/useTradeAlerts';
 
 export default function LiveLogsPanel() {
-  const { liveLogs, clearLogs, wsConnected } = useAutoTradingStore();
+  const { liveLogs, clearLogs, wsConnected, connectedBroker } = useAutoTradingStore();
   const logsEndRef = useRef<HTMLDivElement>(null);
   
   // Use enhanced trade alerts hook
   useTradeAlerts();
 
+  // PRIORITY: Immediate scroll for new logs (optimized for Exness/Deriv)
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Use requestAnimationFrame for smooth scrolling without blocking
+    requestAnimationFrame(() => {
+      logsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }, [liveLogs]);
+  
+  // PRIORITY: Filter and prioritize trade-related logs for Exness/Deriv
+  const prioritizedLogs = useMemo(() => {
+    if (!Array.isArray(liveLogs) || liveLogs.length === 0) {
+      return [];
+    }
+    
+    return liveLogs.map((log, index) => {
+      const message = log?.message?.toLowerCase() || '';
+      const isTradeLog = message.includes('trade') ||
+                        message.includes('position') ||
+                        message.includes('profit') ||
+                        message.includes('loss') ||
+                        message.includes('tp') ||
+                        message.includes('sl');
+      return { ...log, isTradeLog, index };
+    }).sort((a, b) => {
+      // Trade logs first, then by timestamp (newest first)
+      if (a.isTradeLog && !b.isTradeLog) return -1;
+      if (!a.isTradeLog && b.isTradeLog) return 1;
+      const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : 0;
+      const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : 0;
+      return bTime - aTime;
+    });
   }, [liveLogs]);
 
   const getLogIcon = (level: string) => {
@@ -54,7 +83,12 @@ export default function LiveLogsPanel() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-400">Live Logs</span>
-          <div className={`h-2 w-2 rounded-full ${wsConnected ? 'bg-green-400' : 'bg-gray-500'}`} />
+          <div className={`h-2 w-2 rounded-full ${wsConnected ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`} />
+          {wsConnected && connectedBroker && (
+            <span className="text-xs text-yellow-400">
+              ⚡ {connectedBroker.toUpperCase()} Priority
+            </span>
+          )}
         </div>
         <Button
           variant="ghost"
@@ -68,22 +102,26 @@ export default function LiveLogsPanel() {
 
       {/* Logs Container */}
       <div className="h-64 overflow-y-auto bg-gray-900 rounded-lg border border-gray-700 p-3 space-y-2">
-        {liveLogs.length === 0 ? (
+        {prioritizedLogs.length === 0 ? (
           <div className="text-center py-8 text-gray-500 text-sm">
             No logs yet. Start the bot to see activity.
           </div>
         ) : (
-          liveLogs.map((log) => (
+          prioritizedLogs.map((log) => (
             <div
               key={log.id}
-              className={`p-2 rounded border text-xs ${getLogColor(log.level)}`}
+              className={`p-2 rounded border text-xs ${getLogColor(log.level)} ${
+                log.isTradeLog ? 'ring-1 ring-yellow-500/20' : ''
+              }`}
             >
               <div className="flex items-start gap-2">
                 {getLogIcon(log.level)}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-gray-400">
-                      {log.timestamp.toLocaleTimeString()}
+                      {log.timestamp instanceof Date 
+                        ? log.timestamp.toLocaleTimeString() 
+                        : new Date(log.timestamp).toLocaleTimeString()}
                     </span>
                     <span className={`font-semibold ${
                       log.level === 'error' ? 'text-red-400' :

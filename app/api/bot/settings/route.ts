@@ -97,6 +97,13 @@ export async function POST(request: NextRequest) {
       settings = await SignalistBotSettings.create(settingsData);
     }
 
+    if (!settings) {
+      return NextResponse.json(
+        { success: false, error: 'Failed to save settings' },
+        { status: 500 }
+      );
+    }
+
     // Don't return sensitive fields
     const responseSettings = settings.toObject();
     delete responseSettings.mt5Password;
@@ -147,6 +154,8 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+
 
 
 

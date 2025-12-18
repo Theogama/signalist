@@ -6,6 +6,7 @@
  */
 
 import { useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useAutoTradingStore } from '@/lib/stores/autoTradingStore';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -38,15 +39,23 @@ import ClosedTrades from './ClosedTrades';
 import BotDiagnosticsPanel from './BotDiagnosticsPanel';
 import { useWebSocket } from '@/lib/hooks/useWebSocket';
 import { useStateRestoration } from '@/lib/hooks/useStateRestoration';
+import { useTradeAlerts } from '@/lib/hooks/useTradeAlerts';
 import { useAutoTradingStore as useStore } from '@/lib/stores/autoTradingStore';
 import { toast } from 'sonner';
+import { useRouter } from 'next/navigation';
 
 export default function AutoTradingDashboard() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  
   // Restore state on page load
   const { isRestoring } = useStateRestoration();
   
   // Initialize WebSocket connection
   useWebSocket();
+  
+  // Initialize enhanced trade alerts
+  useTradeAlerts();
   const {
     connectedBroker,
     balance,
@@ -60,7 +69,65 @@ export default function AutoTradingDashboard() {
     setBalance,
     addLog,
     disconnectBroker,
+    connectBrokerDemo,
   } = useAutoTradingStore();
+
+  // Handle OAuth callback
+  useEffect(() => {
+    const handleOAuthCallback = async () => {
+      const derivConnected = searchParams.get('deriv_connected');
+      const accountType = searchParams.get('account_type');
+      const error = searchParams.get('error');
+      const errorMessage = searchParams.get('message');
+
+      if (error) {
+        toast.error('Deriv Authentication Failed', {
+          description: errorMessage || error,
+        });
+        // Remove error params from URL
+        router.replace('/autotrade');
+        return;
+      }
+
+      if (derivConnected === 'true') {
+        try {
+          // Connect broker in store
+          await connectBrokerDemo('deriv');
+          
+          // Fetch account balance
+          const response = await fetch('/api/auto-trading/account?broker=deriv');
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.data) {
+              setBalance(
+                data.data.balance || 10000,
+                data.data.equity || 10000,
+                data.data.margin || 0
+              );
+            }
+          }
+
+          toast.success('Deriv Account Connected', {
+            description: `Successfully connected to your Deriv ${accountType === 'demo' ? 'Demo' : 'Real'} account`,
+          });
+
+          addLog({
+            level: 'success',
+            message: `Deriv ${accountType === 'demo' ? 'Demo' : 'Real'} account connected successfully`,
+          });
+
+          // Remove success params from URL
+          router.replace('/autotrade');
+        } catch (error: any) {
+          toast.error('Failed to sync Deriv account', {
+            description: error.message,
+          });
+        }
+      }
+    };
+
+    handleOAuthCallback();
+  }, [searchParams, router, connectBrokerDemo, setBalance, addLog]);
 
   useEffect(() => {
     loadBots();

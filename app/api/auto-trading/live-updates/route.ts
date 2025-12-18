@@ -107,19 +107,31 @@ export async function GET(request: NextRequest) {
                 totalEquity += balance.equity;
                 totalMargin += balance.margin;
 
-                // Get open positions as trades
+                // Get open positions as trades with current P/L
                 const openPositions = bot.paperTrader.getOpenPositions();
-                openTrades.push(...openPositions.map((p) => ({
-                  id: p.tradeId,
-                  symbol: p.position.symbol || bot.instrument,
-                  side: p.position.side || 'BUY',
-                  entryPrice: p.position.entryPrice,
-                  quantity: p.position.quantity,
-                  status: 'OPEN' as const,
-                  openedAt: p.position.openedAt || new Date(),
-                  profitLoss: undefined,
-                  exitPrice: undefined,
-                })));
+                openTrades.push(...openPositions.map((p) => {
+                  // Calculate current P/L
+                  const currentPrice = p.position.currentPrice || p.position.entryPrice;
+                  let currentPnl = 0;
+                  if (p.position.side === 'BUY') {
+                    currentPnl = (currentPrice - p.position.entryPrice) * p.position.quantity;
+                  } else {
+                    currentPnl = (p.position.entryPrice - currentPrice) * p.position.quantity;
+                  }
+                  
+                  return {
+                    id: p.tradeId,
+                    symbol: p.position.symbol || bot.instrument,
+                    side: p.position.side || 'BUY',
+                    entryPrice: p.position.entryPrice,
+                    quantity: p.position.quantity,
+                    status: 'OPEN' as const,
+                    openedAt: p.position.openedAt || new Date(),
+                    profitLoss: currentPnl,
+                    exitPrice: currentPrice,
+                    currentPrice,
+                  };
+                }));
 
                 // Get closed trades from history
                 const history = bot.paperTrader.getHistory();

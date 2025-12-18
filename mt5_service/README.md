@@ -86,3 +86,5 @@ python main.py
 - All trades have comment "SIGNALIST Bot"
 
 
+
+

@@ -101,3 +101,5 @@ export const SignalistBotSettings: Model<SignalistBotSettingsDoc> =
   model<SignalistBotSettingsDoc>('SignalistBotSettings', SignalistBotSettingsSchema);
 
 
+
+

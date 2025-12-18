@@ -59,7 +59,7 @@ export default function OpenTrades() {
   });
 
   return (
-    <Card>
+    <Card id="open-trades">
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
           <div className="flex items-center gap-2">

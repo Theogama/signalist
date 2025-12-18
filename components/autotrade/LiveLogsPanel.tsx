@@ -9,59 +9,18 @@ import { useEffect, useRef } from 'react';
 import { useAutoTradingStore } from '@/lib/stores/autoTradingStore';
 import { Button } from '@/components/ui/button';
 import { Trash2, AlertCircle, CheckCircle2, Info, AlertTriangle } from 'lucide-react';
-import { toast } from 'sonner';
+import { useTradeAlerts } from '@/lib/hooks/useTradeAlerts';
 
 export default function LiveLogsPanel() {
-  const { liveLogs, clearLogs, wsConnected, closedTrades } = useAutoTradingStore();
+  const { liveLogs, clearLogs, wsConnected } = useAutoTradingStore();
   const logsEndRef = useRef<HTMLDivElement>(null);
-  const processedTradeIdsRef = useRef<Set<string>>(new Set());
-  const lastClosedTradeIdsRef = useRef<Set<string>>(new Set());
+  
+  // Use enhanced trade alerts hook
+  useTradeAlerts();
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [liveLogs]);
-
-  // Show alerts for wins/losses - improved detection using trade IDs
-  useEffect(() => {
-    // Get current closed trade IDs
-    const currentClosedIds = new Set(closedTrades.map(t => t.id));
-    
-    // Find new trades (trades that weren't in the last check)
-    const newTrades = closedTrades.filter(trade => {
-      const isNew = !lastClosedTradeIdsRef.current.has(trade.id);
-      const notProcessed = !processedTradeIdsRef.current.has(trade.id);
-      return isNew && notProcessed && trade.profitLoss !== undefined;
-    });
-
-    // Show alerts for new trades
-    newTrades.forEach((trade) => {
-      // Mark as processed to prevent duplicate alerts
-      processedTradeIdsRef.current.add(trade.id);
-      
-      if (trade.profitLoss !== undefined) {
-        if (trade.profitLoss > 0) {
-          toast.success(`💰 Trade Won! +$${trade.profitLoss.toFixed(2)}`, {
-            description: `${trade.symbol} ${trade.side} - Profit: $${trade.profitLoss.toFixed(2)}`,
-            duration: 5000,
-          });
-        } else if (trade.profitLoss < 0) {
-          toast.error(`❌ Trade Lost! $${trade.profitLoss.toFixed(2)}`, {
-            description: `${trade.symbol} ${trade.side} - Loss: $${Math.abs(trade.profitLoss).toFixed(2)}`,
-            duration: 5000,
-          });
-        } else {
-          // Break-even trade
-          toast.info(`➖ Trade Closed at Break-Even`, {
-            description: `${trade.symbol} ${trade.side} - No profit/loss`,
-            duration: 3000,
-          });
-        }
-      }
-    });
-
-    // Update last known closed trade IDs
-    lastClosedTradeIdsRef.current = currentClosedIds;
-  }, [closedTrades]);
 
   const getLogIcon = (level: string) => {
     switch (level) {

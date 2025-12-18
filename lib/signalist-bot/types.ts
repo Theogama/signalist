@@ -284,3 +284,5 @@ export type BotEvent =
   | { type: 'candle_processed'; candle: Candle; timestamp: Date };
 
 
+
+

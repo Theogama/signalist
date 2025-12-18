@@ -80,3 +80,5 @@ export const SignalistBotTrade: Model<SignalistBotTradeDoc> =
   model<SignalistBotTradeDoc>('SignalistBotTrade', SignalistBotTradeSchema);
 
 
+
+

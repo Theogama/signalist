@@ -51,6 +51,28 @@ export default function BrokerConnectionModal() {
     setBalance,
   } = useAutoTradingStore();
 
+  const handleDerivOAuth = async (accountType: 'demo' | 'real' = 'real') => {
+    // Check if already connected to a different broker
+    if (connectedBroker && connectedBroker !== 'deriv') {
+      toast.error(`Please disconnect from ${connectedBroker.toUpperCase()} first before connecting to Deriv`);
+      return;
+    }
+
+    try {
+      setIsValidating(true);
+      
+      // Redirect to Deriv OAuth authentication page
+      const authUrl = `/api/auto-trading/deriv/auth?account_type=${accountType}`;
+      window.location.href = authUrl;
+      
+      // Note: User will be redirected back after authentication
+      // The callback handler will update the store and redirect to autotrade page
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to initiate Deriv authentication');
+      setIsValidating(false);
+    }
+  };
+
   const handleQuickConnect = async (selectedBroker: BrokerType, connectionType: 'oauth2' | 'quick_connect' = 'quick_connect') => {
     if (!selectedBroker) return;
 
@@ -60,17 +82,23 @@ export default function BrokerConnectionModal() {
       return;
     }
 
+    // For Deriv, use OAuth flow instead of quick connect
+    if (selectedBroker === 'deriv') {
+      await handleDerivOAuth('demo');
+      return;
+    }
+
     try {
       setIsValidating(true);
       
-      // Use quick connect API endpoint
+      // Use quick connect API endpoint for other brokers
       const response = await fetch('/api/auto-trading/quick-connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           broker: selectedBroker,
           connectionType: selectedBroker === 'exness' ? 'oauth2' : 'quick_connect',
-          credentials: connectionType === 'oauth2' ? {} : {}, // OAuth2 flow would have code here
+          credentials: connectionType === 'oauth2' ? {} : {},
         }),
       });
 
@@ -379,14 +407,31 @@ export default function BrokerConnectionModal() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => handleConnectDemo('deriv')}
+              onClick={() => handleDerivOAuth('demo')}
               disabled={isValidating || isConnecting}
               className="flex items-center justify-center gap-2 text-sm sm:text-base"
             >
               <Zap className="h-4 w-4" />
-              <span className="hidden sm:inline">Quick Connect Deriv (Demo)</span>
+              <span className="hidden sm:inline">Connect Deriv (Demo)</span>
               <span className="sm:hidden">Deriv Demo</span>
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => handleDerivOAuth('real')}
+              disabled={isValidating || isConnecting}
+              className="flex items-center justify-center gap-2 text-sm sm:text-base border-green-500/50 hover:border-green-500"
+            >
+              <Zap className="h-4 w-4" />
+              <span className="hidden sm:inline">Connect Deriv (Real)</span>
+              <span className="sm:hidden">Deriv Real</span>
+            </Button>
+          </div>
+          
+          {/* OAuth Info */}
+          <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+            <p className="text-xs text-blue-400">
+              🔐 <span className="font-semibold">Secure OAuth:</span> Deriv authentication uses official Deriv OAuth2 flow. You'll be redirected to Deriv's secure login page.
+            </p>
           </div>
 
           <div className="relative">

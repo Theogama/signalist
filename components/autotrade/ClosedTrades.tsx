@@ -44,7 +44,7 @@ export default function ClosedTrades() {
   const displayedTrades = showAll ? closedTrades : closedTrades.slice(0, 10);
 
   return (
-    <Card>
+    <Card id="closed-trades">
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
           <div className="flex items-center gap-2">

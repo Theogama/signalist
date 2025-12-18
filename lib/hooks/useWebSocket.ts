@@ -82,10 +82,12 @@ export function useWebSocket() {
                 data.data.forEach((trade: any) => {
                   const existing = currentOpen.find(t => t.id === trade.id);
                   if (existing) {
-                    // Update existing trade
+                    // Update existing trade with P/L information
                     updateTrade(trade.id, {
                       entryPrice: trade.entryPrice,
                       quantity: trade.quantity,
+                      profitLoss: trade.profitLoss !== undefined ? trade.profitLoss : trade.currentPnl,
+                      exitPrice: trade.exitPrice,
                     });
                   } else {
                     // Add new trade
@@ -95,6 +97,7 @@ export function useWebSocket() {
                       side: trade.side || 'BUY',
                       entryPrice: trade.entryPrice,
                       quantity: trade.quantity,
+                      profitLoss: trade.profitLoss !== undefined ? trade.profitLoss : trade.currentPnl,
                       status: 'OPEN',
                       openedAt: trade.openedAt ? new Date(trade.openedAt) : new Date(),
                     });
@@ -125,11 +128,44 @@ export function useWebSocket() {
               // Immediate notification when a trade closes
               if (data.data) {
                 const trade = data.data;
+                // Ensure profitLoss is calculated if missing
+                const profitLoss = trade.profitLoss !== undefined ? trade.profitLoss :
+                                 (trade.exitPrice && trade.entryPrice && trade.quantity) ?
+                                 (trade.side === 'BUY' ? 
+                                   (trade.exitPrice - trade.entryPrice) * trade.quantity :
+                                   (trade.entryPrice - trade.exitPrice) * trade.quantity) : 0;
+                
                 updateTrade(trade.id, {
                   ...trade,
-                  status: 'CLOSED',
-                  profitLoss: trade.profitLoss,
+                  status: trade.status || 'CLOSED',
+                  profitLoss,
+                  exitPrice: trade.exitPrice,
                   closedAt: trade.closedAt ? new Date(trade.closedAt) : new Date(),
+                });
+              }
+              break;
+            case 'trade_opened':
+              // Immediate notification when a trade opens
+              if (data.data) {
+                const trade = data.data;
+                addTrade({
+                  id: trade.id || trade.tradeId,
+                  symbol: trade.symbol,
+                  side: trade.side || 'BUY',
+                  entryPrice: trade.entryPrice || trade.price,
+                  quantity: trade.quantity || trade.volume,
+                  status: 'OPEN',
+                  openedAt: trade.openedAt ? new Date(trade.openedAt) : new Date(),
+                });
+              }
+              break;
+            case 'position_update':
+              // Position P/L update
+              if (data.data) {
+                const update = data.data;
+                updateTrade(update.id || update.tradeId, {
+                  profitLoss: update.profitLoss !== undefined ? update.profitLoss : update.currentPnl,
+                  exitPrice: update.currentPrice,
                 });
               }
               break;

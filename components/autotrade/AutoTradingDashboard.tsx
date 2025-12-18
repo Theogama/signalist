@@ -72,9 +72,9 @@ export default function AutoTradingDashboard() {
     connectBrokerDemo,
   } = useAutoTradingStore();
 
-  // Handle OAuth callback
+  // Handle Deriv connection callback
   useEffect(() => {
-    const handleOAuthCallback = async () => {
+    const handleDerivCallback = async () => {
       const derivConnected = searchParams.get('deriv_connected');
       const accountType = searchParams.get('account_type');
       const error = searchParams.get('error');
@@ -84,54 +84,167 @@ export default function AutoTradingDashboard() {
         toast.error('Deriv Authentication Failed', {
           description: errorMessage || error,
         });
-        // Remove error params from URL
         router.replace('/autotrade');
         return;
       }
 
       if (derivConnected === 'true') {
         try {
-          // Connect broker in store
-          await connectBrokerDemo('deriv');
-          
-          // Fetch account balance
-          const response = await fetch('/api/auto-trading/account?broker=deriv');
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.data) {
+          // Verify connection exists on server
+          const syncResponse = await fetch('/api/auto-trading/deriv/sync-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          });
+
+          if (syncResponse.ok) {
+            const syncData = await syncResponse.json();
+            if (syncData.success && syncData.data && syncData.data.connected) {
+              // Connection verified - update store
+              const currentState = useAutoTradingStore.getState();
+              
+              // Only update if not already connected
+              if (currentState.connectedBroker !== 'deriv') {
+                useAutoTradingStore.setState({
+                  connectedBroker: 'deriv',
+                  brokerApiKey: null,
+                  brokerApiSecret: null,
+                  mt5ConnectionId: null,
+                  mt5Login: null,
+                  mt5Server: null,
+                  isConnecting: false,
+                  connectionError: null,
+                  balance: syncData.data.balance || currentState.balance || 10000,
+                  equity: syncData.data.equity || currentState.equity || 10000,
+                  margin: syncData.data.margin || currentState.margin || 0,
+                });
+
+                // Load instruments
+                await loadInstruments('deriv');
+              }
+
+              // Update balance
               setBalance(
-                data.data.balance || 10000,
-                data.data.equity || 10000,
-                data.data.margin || 0
+                syncData.data.balance || 10000,
+                syncData.data.equity || 10000,
+                syncData.data.margin || 0
               );
+
+              toast.success('Deriv Account Connected', {
+                description: `Successfully connected to your Deriv ${syncData.data.accountType === 'demo' ? 'Demo' : 'Real'} account`,
+                duration: 5000,
+              });
+
+              addLog({
+                level: 'success',
+                message: `Deriv ${syncData.data.accountType === 'demo' ? 'Demo' : 'Real'} account connected successfully`,
+              });
+            } else {
+              // Connection not verified - try to establish it
+              console.warn('Connection not verified, attempting to establish...');
+              
+              // Fetch account to establish connection
+              const accountResponse = await fetch('/api/auto-trading/account?broker=deriv');
+              if (accountResponse.ok) {
+                const accountData = await accountResponse.json();
+                if (accountData.success && accountData.data) {
+                  useAutoTradingStore.setState({
+                    connectedBroker: 'deriv',
+                    brokerApiKey: null,
+                    brokerApiSecret: null,
+                    isConnecting: false,
+                    connectionError: null,
+                    balance: accountData.data.balance || 10000,
+                    equity: accountData.data.equity || 10000,
+                    margin: accountData.data.margin || 0,
+                  });
+
+                  await loadInstruments('deriv');
+                  
+                  toast.success('Deriv Account Connected', {
+                    description: 'Connection established successfully',
+                  });
+                } else {
+                  throw new Error('Failed to establish connection');
+                }
+              } else {
+                throw new Error('Connection verification failed');
+              }
             }
+          } else {
+            throw new Error('Failed to verify connection');
           }
-
-          toast.success('Deriv Account Connected', {
-            description: `Successfully connected to your Deriv ${accountType === 'demo' ? 'Demo' : 'Real'} account`,
-          });
-
-          addLog({
-            level: 'success',
-            message: `Deriv ${accountType === 'demo' ? 'Demo' : 'Real'} account connected successfully`,
-          });
 
           // Remove success params from URL
           router.replace('/autotrade');
         } catch (error: any) {
-          toast.error('Failed to sync Deriv account', {
-            description: error.message,
+          console.error('Error handling Deriv connection:', error);
+          toast.error('Failed to establish Deriv connection', {
+            description: error.message || 'Please try reconnecting',
           });
+          router.replace('/autotrade');
         }
       }
     };
 
-    handleOAuthCallback();
-  }, [searchParams, router, connectBrokerDemo, setBalance, addLog]);
+    handleDerivCallback();
+  }, [searchParams, router, setBalance, addLog, loadInstruments]);
 
   useEffect(() => {
     loadBots();
   }, []); // Only run once on mount
+
+  // Check and restore Deriv connection on mount
+  useEffect(() => {
+    const checkDerivConnection = async () => {
+      // Only check if not already connected and not currently restoring
+      if (connectedBroker !== 'deriv' && !isRestoring) {
+        try {
+          // Check if there's a stored Deriv connection
+          const syncResponse = await fetch('/api/auto-trading/deriv/sync-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          });
+
+          if (syncResponse.ok) {
+            const syncData = await syncResponse.json();
+            if (syncData.success && syncData.data && syncData.data.connected) {
+              // Restore connection
+              useAutoTradingStore.setState({
+                connectedBroker: 'deriv',
+                brokerApiKey: null,
+                brokerApiSecret: null,
+                isConnecting: false,
+                connectionError: null,
+                balance: syncData.data.balance || 10000,
+                equity: syncData.data.equity || 10000,
+                margin: syncData.data.margin || 0,
+              });
+
+              setBalance(
+                syncData.data.balance || 10000,
+                syncData.data.equity || 10000,
+                syncData.data.margin || 0
+              );
+
+              await loadInstruments('deriv');
+
+              addLog({
+                level: 'info',
+                message: `Deriv ${syncData.data.accountType === 'demo' ? 'Demo' : 'Real'} connection restored`,
+              });
+            }
+          }
+        } catch (error) {
+          // Silently fail - connection might not exist
+          console.debug('No Deriv connection found to restore');
+        }
+      }
+    };
+
+    // Wait a bit before checking to avoid race conditions
+    const timer = setTimeout(checkDerivConnection, 1000);
+    return () => clearTimeout(timer);
+  }, [connectedBroker, isRestoring, setBalance, addLog, loadInstruments]);
 
   useEffect(() => {
     // Show restoration status

@@ -13,6 +13,131 @@ import { DerivAccountSyncService } from '@/lib/services/deriv-account-sync.servi
 
 const FRONTEND_REDIRECT = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
+export async function POST(request: NextRequest) {
+  try {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    const body = await request.json();
+    const { accounts: accountsFromBody } = body;
+    const userId = session.user.id;
+
+    // Use accounts from request body if provided, otherwise extract from query params
+    let accounts: Array<{
+      loginid: string;
+      token: string;
+      currency: string;
+      accountType: 'demo' | 'real';
+    }> = [];
+
+    if (accountsFromBody && Array.isArray(accountsFromBody)) {
+      // Use accounts from POST body
+      accounts = accountsFromBody.map((acc: any) => ({
+        loginid: acc.loginid,
+        token: acc.token,
+        currency: acc.currency || 'USD',
+        accountType: (acc.loginid?.startsWith('VR') || acc.loginid?.startsWith('CR')) ? 'demo' : 'real',
+      }));
+    } else {
+      // Fallback to GET query params (for backward compatibility)
+      const { searchParams } = new URL(request.url);
+      let index = 1;
+      while (true) {
+        const acct = searchParams.get(`acct${index}`);
+        const token = searchParams.get(`token${index}`);
+        const cur = searchParams.get(`cur${index}`);
+
+        if (!acct || !token) {
+          break;
+        }
+
+        accounts.push({
+          loginid: acct,
+          token: token,
+          currency: cur || 'USD',
+          accountType: acct.startsWith('VR') || acct.startsWith('CR') ? 'demo' : 'real',
+        });
+
+        index++;
+      }
+    }
+
+    if (accounts.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'No accounts found' },
+        { status: 400 }
+      );
+    }
+
+    // Continue with existing logic...
+    const primaryAccount = accounts[0];
+    const accessToken = primaryAccount.token;
+
+    // Initialize and store adapter
+    const adapter = new DerivAdapter();
+    await adapter.initialize({
+      apiKey: accessToken,
+      apiSecret: '',
+      environment: primaryAccount.accountType === 'demo' ? 'demo' : 'live',
+    });
+    
+    (adapter as any).accessToken = accessToken;
+    (adapter as any).tokenExpiry = Date.now() + (3600 * 1000);
+    (adapter as any).authenticated = true;
+    adapter.setPaperTrading(primaryAccount.accountType === 'demo');
+
+    sessionManager.setUserAdapter(userId, 'deriv', adapter);
+
+    // Get account balance
+    let balance;
+    try {
+      balance = await adapter.getBalance();
+    } catch (error: any) {
+      balance = {
+        balance: primaryAccount.accountType === 'demo' ? 10000 : 0,
+        equity: primaryAccount.accountType === 'demo' ? 10000 : 0,
+        margin: 0,
+        freeMargin: primaryAccount.accountType === 'demo' ? 10000 : 0,
+        currency: primaryAccount.currency || 'USD',
+      };
+    }
+
+    // Store tokens
+    await storeDerivTokens(userId, {
+      accessToken,
+      refreshToken: null,
+      expiresAt: new Date(Date.now() + 3600 * 1000),
+      accountType: primaryAccount.accountType,
+      accountData: { accounts },
+      accounts,
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        broker: 'deriv',
+        accountType: primaryAccount.accountType,
+        accounts: accounts.length,
+        balance: balance.balance,
+        equity: balance.equity,
+        margin: balance.margin,
+        loginid: primaryAccount.loginid,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error in Deriv redirect handler:', error);
+    return NextResponse.json(
+      { success: false, error: error.message || 'Failed to process redirect' },
+      { status: 500 }
+    );
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const session = await auth.api.getSession({ headers: await headers() });
@@ -105,6 +230,33 @@ export async function GET(request: NextRequest) {
 
     // Store adapter in session manager
     sessionManager.setUserAdapter(userId, 'deriv', adapter);
+    console.log(`[Deriv Redirect] Stored adapter for userId: ${userId}, accountType: ${primaryAccount.accountType}`);
+
+    // Verify adapter was stored
+    const storedAdapter = sessionManager.getUserAdapter(userId, 'deriv');
+    if (!storedAdapter) {
+      console.error(`[Deriv Redirect] WARNING: Adapter was not stored correctly for userId: ${userId}`);
+    } else {
+      console.log(`[Deriv Redirect] Verified adapter stored successfully`);
+    }
+
+    // Get account balance
+    let balance;
+    try {
+      const accountBalance = await adapter.getBalance();
+      balance = accountBalance;
+      console.log(`[Deriv Redirect] Fetched balance:`, balance);
+    } catch (error: any) {
+      console.warn(`[Deriv Redirect] Failed to fetch balance, using fallback:`, error.message);
+      // Fallback to demo balance if real balance fetch fails
+      balance = {
+        balance: primaryAccount.accountType === 'demo' ? 10000 : 0,
+        equity: primaryAccount.accountType === 'demo' ? 10000 : 0,
+        margin: 0,
+        freeMargin: primaryAccount.accountType === 'demo' ? 10000 : 0,
+        currency: primaryAccount.currency || 'USD',
+      };
+    }
 
     // Store tokens securely in database
     await storeDerivTokens(userId, {
@@ -116,9 +268,20 @@ export async function GET(request: NextRequest) {
       accounts, // Store all accounts from redirect
     });
 
-    // Redirect to frontend with success
+    // Build redirect URL with all necessary information
+    const redirectParams = new URLSearchParams({
+      deriv_connected: 'true',
+      account_type: primaryAccount.accountType,
+      accounts: accounts.length.toString(),
+      balance: balance.balance?.toString() || '0',
+      equity: balance.equity?.toString() || '0',
+      margin: balance.margin?.toString() || '0',
+      loginid: primaryAccount.loginid,
+    });
+
+    // Redirect to frontend with success and account info
     return NextResponse.redirect(
-      `${FRONTEND_REDIRECT}/autotrade?deriv_connected=true&account_type=${primaryAccount.accountType}&accounts=${accounts.length}`
+      `${FRONTEND_REDIRECT}/autotrade?${redirectParams.toString()}`
     );
   } catch (error: any) {
     console.error('Error in Deriv redirect handler:', error);

@@ -23,18 +23,18 @@ export default async function HomePage({
                     params.append(key, Array.isArray(value) ? value[0] : value);
                 }
             });
-            redirect(`/sign-in?redirect=/api/auto-trading/deriv/redirect?${params.toString()}`);
+            redirect(`/sign-in?redirect=/deriv-callback?${params.toString()}`);
             return null;
         }
         
-        // Redirect to the Deriv redirect handler API route
+        // Redirect to client-side callback page that will handle the connection
         const params = new URLSearchParams();
         Object.entries(searchParams).forEach(([key, value]) => {
             if (value) {
                 params.append(key, Array.isArray(value) ? value[0] : value);
             }
         });
-        redirect(`/api/auto-trading/deriv/redirect?${params.toString()}`);
+        redirect(`/deriv-callback?${params.toString()}`);
         return null;
     }
 

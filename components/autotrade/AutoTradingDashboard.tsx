@@ -9,6 +9,7 @@ import { useEffect } from 'react';
 import { useAutoTradingStore } from '@/lib/stores/autoTradingStore';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { 
   Wallet, 
   TrendingUp, 
@@ -110,23 +111,29 @@ export default function AutoTradingDashboard() {
       }
     };
 
-    // Fetch immediately
+    // Fetch immediately on mount
     fetchAccountBalance();
 
-    // Then poll every 10 seconds (reduced from 5s for better performance)
-    const interval = setInterval(fetchAccountBalance, 10000);
+    // Then poll every 15 seconds (reduced frequency for better performance)
+    // WebSocket handles real-time balance updates
+    const interval = setInterval(fetchAccountBalance, 15000);
     return () => clearInterval(interval);
   }, [connectedBroker, setBalance]);
 
-  // Fetch positions and trades when bot is running
+  // Fetch positions and trades when broker is connected (for Deriv, always fetch even if bot not running)
   useEffect(() => {
-    if (botStatus !== 'running') return;
+    if (!connectedBroker) return;
 
     const { syncTrades } = useAutoTradingStore.getState();
 
     const fetchPositions = async () => {
       try {
-        const response = await fetch('/api/auto-trading/positions');
+        // Include broker parameter to ensure Deriv data is fetched
+        const url = connectedBroker === 'deriv' 
+          ? `/api/auto-trading/positions?broker=deriv`
+          : '/api/auto-trading/positions';
+        
+        const response = await fetch(url);
         if (response.ok) {
           const data = await response.json();
           if (data.success && data.data) {
@@ -139,28 +146,32 @@ export default function AutoTradingDashboard() {
               );
             }
 
-            // Sync trades
+            // Sync trades - ensure all fields are properly handled with fallbacks
             const openTradesList = (data.data.openTrades || []).map((trade: any) => ({
-              id: trade.id,
-              symbol: trade.symbol,
+              id: trade.id || trade.tradeId || String(Math.random()),
+              symbol: trade.symbol || 'UNKNOWN',
               side: trade.side || 'BUY',
-              entryPrice: trade.entryPrice,
-              quantity: trade.quantity,
+              entryPrice: trade.entryPrice || 0,
+              quantity: trade.quantity || trade.lotOrStake || 0,
               status: 'OPEN' as const,
               openedAt: trade.openedAt ? new Date(trade.openedAt) : new Date(),
+              exitPrice: trade.exitPrice || trade.entryPrice || 0, // Include for P/L calculation
+              profitLoss: trade.profitLoss || trade.unrealizedPnl || 0,
+              brokerTradeId: trade.brokerTradeId, // Include Deriv contract ID
             }));
 
             const closedTradesList = (data.data.closedTrades || []).map((trade: any) => ({
-              id: trade.id,
-              symbol: trade.symbol,
+              id: trade.id || trade.tradeId || String(Math.random()),
+              symbol: trade.symbol || 'UNKNOWN',
               side: trade.side || 'BUY',
-              entryPrice: trade.entryPrice,
-              exitPrice: trade.exitPrice,
-              quantity: trade.quantity,
-              profitLoss: trade.profitLoss,
+              entryPrice: trade.entryPrice || 0,
+              exitPrice: trade.exitPrice || trade.entryPrice || 0,
+              quantity: trade.quantity || trade.lotOrStake || 0,
+              profitLoss: trade.profitLoss || trade.realizedPnl || 0,
               status: (trade.status || 'CLOSED') as 'CLOSED' | 'STOPPED',
               openedAt: trade.openedAt ? new Date(trade.openedAt) : new Date(),
               closedAt: trade.closedAt ? new Date(trade.closedAt) : new Date(),
+              brokerTradeId: trade.brokerTradeId, // Include Deriv contract ID
             }));
 
             syncTrades(openTradesList, closedTradesList);
@@ -174,10 +185,12 @@ export default function AutoTradingDashboard() {
     // Fetch immediately
     fetchPositions();
 
-    // Then poll every 5 seconds (reduced from 3s for better performance)
-    const interval = setInterval(fetchPositions, 5000);
+    // Poll every 10 seconds (reduced frequency for better performance)
+    // WebSocket handles real-time updates, polling is just a backup
+    const interval = setInterval(fetchPositions, 10000);
     return () => clearInterval(interval);
-  }, [botStatus, setBalance]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectedBroker, botStatus, setBalance]);
 
   const freeMargin = equity - margin;
   const marginLevel = margin > 0 ? (equity / margin) * 100 : 0;
@@ -186,8 +199,25 @@ export default function AutoTradingDashboard() {
     <div className="container mx-auto px-4 py-8 max-w-7xl">
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-100 mb-2">Auto-Trading Dashboard</h1>
-        <p className="text-gray-400">Automated trading with Exness and Deriv brokers</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-100 mb-2">Auto-Trading Dashboard</h1>
+            <div className="text-gray-400 flex items-center gap-2 flex-wrap">
+              <span>Automated trading with Exness and Deriv brokers</span>
+              {connectedBroker === 'deriv' && (
+                <Badge variant="outline" className="border-blue-500 text-blue-400">
+                  DERIV DATA ACTIVE
+                </Badge>
+              )}
+            </div>
+          </div>
+          {connectedBroker === 'deriv' && (
+            <div className="flex items-center gap-2 text-sm text-blue-400">
+              <Activity className="h-4 w-4 animate-pulse" />
+              <span>Deriv Trading Active</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Broker Connection Status */}
@@ -261,7 +291,14 @@ export default function AutoTradingDashboard() {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardDescription className="text-xs">Balance</CardDescription>
+                  <div className="flex items-center justify-between">
+                    <CardDescription className="text-xs">Balance</CardDescription>
+                    {connectedBroker === 'deriv' && (
+                      <Badge variant="outline" className="text-xs border-blue-500 text-blue-400">
+                        DERIV
+                      </Badge>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center gap-2">

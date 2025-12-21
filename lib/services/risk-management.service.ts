@@ -29,6 +29,39 @@ export interface RiskCheckResult {
 
 export class RiskManagementService {
   /**
+   * Check if a trade can be executed (comprehensive validation)
+   */
+  async canExecuteTrade(
+    sessionId: string,
+    signal: any,
+    balance: number
+  ): Promise<RiskCheckResult> {
+    await connectToDatabase();
+    
+    const session = await AutoTradingSession.findOne({ sessionId });
+    if (!session) {
+      return {
+        allowed: false,
+        reason: 'Session not found',
+      };
+    }
+
+    const riskSettings: RiskSettings = {
+      maxTradesPerDay: session.riskSettings.maxTradesPerDay,
+      dailyLossLimit: session.riskSettings.dailyLossLimit,
+      maxStakeSize: session.riskSettings.maxStakeSize,
+      riskPerTrade: session.riskSettings.riskPerTrade || 1,
+      autoStopDrawdown: session.riskSettings.autoStopDrawdown,
+      maxConsecutiveLosses: session.riskSettings.maxConsecutiveLosses,
+    };
+
+    // Calculate stake size first
+    const stake = this.calculateStakeSize(balance, riskSettings, signal.entryPrice, signal.stopLoss);
+
+    return this.checkTradeAllowed(session.userId, stake, balance, riskSettings);
+  }
+
+  /**
    * Check if a trade is allowed based on risk rules
    */
   async checkTradeAllowed(
@@ -182,12 +215,180 @@ export class RiskManagementService {
   }
 
   /**
+   * Check daily limits for a session
+   */
+  async checkDailyLimits(sessionId: string): Promise<RiskCheckResult> {
+    await connectToDatabase();
+    
+    const session = await AutoTradingSession.findOne({ sessionId });
+    if (!session) {
+      return { allowed: false, reason: 'Session not found' };
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const todayTrades = await SignalistBotTrade.find({
+      userId: session.userId,
+      broker: session.broker,
+      entryTimestamp: { $gte: today, $lt: tomorrow },
+    });
+
+    const dailyTradeCount = todayTrades.length;
+    const dailyProfitLoss = todayTrades.reduce((sum, trade) => {
+      return sum + (trade.realizedPnl || trade.unrealizedPnl || 0);
+    }, 0);
+
+    const riskSettings = session.riskSettings;
+
+    if (riskSettings.maxTradesPerDay > 0 && dailyTradeCount >= riskSettings.maxTradesPerDay) {
+      return {
+        allowed: false,
+        reason: `Daily trade limit reached (${dailyTradeCount}/${riskSettings.maxTradesPerDay})`,
+        metrics: {
+          dailyTradeCount,
+          dailyProfitLoss,
+          currentDrawdown: session.currentDrawdown || 0,
+          consecutiveLosses: session.consecutiveLosses || 0,
+        },
+      };
+    }
+
+    if (riskSettings.dailyLossLimit > 0 && dailyProfitLoss <= -riskSettings.dailyLossLimit) {
+      return {
+        allowed: false,
+        reason: `Daily loss limit reached (${Math.abs(dailyProfitLoss)}/${riskSettings.dailyLossLimit})`,
+        metrics: {
+          dailyTradeCount,
+          dailyProfitLoss,
+          currentDrawdown: session.currentDrawdown || 0,
+          consecutiveLosses: session.consecutiveLosses || 0,
+        },
+      };
+    }
+
+    return {
+      allowed: true,
+      metrics: {
+        dailyTradeCount,
+        dailyProfitLoss,
+        currentDrawdown: session.currentDrawdown || 0,
+        consecutiveLosses: session.consecutiveLosses || 0,
+      },
+    };
+  }
+
+  /**
+   * Check drawdown for a session
+   */
+  async checkDrawdown(sessionId: string, currentBalance: number): Promise<RiskCheckResult> {
+    await connectToDatabase();
+    
+    const session = await AutoTradingSession.findOne({ sessionId });
+    if (!session) {
+      return { allowed: false, reason: 'Session not found' };
+    }
+
+    const drawdown = session.startBalance > 0
+      ? ((session.startBalance - currentBalance) / session.startBalance) * 100
+      : 0;
+
+    // Update session drawdown
+    session.currentDrawdown = drawdown;
+    if (drawdown > session.maxDrawdown) {
+      session.maxDrawdown = drawdown;
+    }
+    await session.save();
+
+    if (session.riskSettings.autoStopDrawdown && drawdown >= session.riskSettings.autoStopDrawdown) {
+      return {
+        allowed: false,
+        reason: `Drawdown limit reached (${drawdown.toFixed(2)}%/${session.riskSettings.autoStopDrawdown}%)`,
+        metrics: {
+          dailyTradeCount: session.dailyTradeCount || 0,
+          dailyProfitLoss: session.dailyProfitLoss || 0,
+          currentDrawdown: drawdown,
+          consecutiveLosses: session.consecutiveLosses || 0,
+        },
+      };
+    }
+
+    return {
+      allowed: true,
+      metrics: {
+        dailyTradeCount: session.dailyTradeCount || 0,
+        dailyProfitLoss: session.dailyProfitLoss || 0,
+        currentDrawdown: drawdown,
+        consecutiveLosses: session.consecutiveLosses || 0,
+      },
+    };
+  }
+
+  /**
+   * Check consecutive losses for a session
+   */
+  async checkConsecutiveLosses(sessionId: string): Promise<RiskCheckResult> {
+    await connectToDatabase();
+    
+    const session = await AutoTradingSession.findOne({ sessionId });
+    if (!session) {
+      return { allowed: false, reason: 'Session not found' };
+    }
+
+    const recentTrades = await SignalistBotTrade.find({
+      userId: session.userId,
+      broker: session.broker,
+      status: { $in: ['TP_HIT', 'SL_HIT', 'CLOSED'] },
+    })
+      .sort({ exitTimestamp: -1 })
+      .limit(session.riskSettings.maxConsecutiveLosses || 10);
+
+    let consecutiveLosses = 0;
+    for (const trade of recentTrades) {
+      if ((trade.realizedPnl || 0) < 0) {
+        consecutiveLosses++;
+      } else {
+        break;
+      }
+    }
+
+    // Update session consecutive losses
+    session.consecutiveLosses = consecutiveLosses;
+    await session.save();
+
+    if (session.riskSettings.maxConsecutiveLosses && consecutiveLosses >= session.riskSettings.maxConsecutiveLosses) {
+      return {
+        allowed: false,
+        reason: `Maximum consecutive losses reached (${consecutiveLosses})`,
+        metrics: {
+          dailyTradeCount: session.dailyTradeCount || 0,
+          dailyProfitLoss: session.dailyProfitLoss || 0,
+          currentDrawdown: session.currentDrawdown || 0,
+          consecutiveLosses,
+        },
+      };
+    }
+
+    return {
+      allowed: true,
+      metrics: {
+        dailyTradeCount: session.dailyTradeCount || 0,
+        dailyProfitLoss: session.dailyProfitLoss || 0,
+        currentDrawdown: session.currentDrawdown || 0,
+        consecutiveLosses,
+      },
+    };
+  }
+
+  /**
    * Calculate safe stake size based on risk settings
    */
   calculateStakeSize(
     balance: number,
     riskSettings: RiskSettings,
-    entryPrice: number,
+    entryPrice?: number,
     stopLoss?: number
   ): number {
     // Calculate risk amount based on percentage
@@ -316,4 +517,5 @@ export class RiskManagementService {
 }
 
 export const riskManagementService = new RiskManagementService();
+
 

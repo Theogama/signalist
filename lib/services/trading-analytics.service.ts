@@ -76,6 +76,339 @@ export interface TradingAnalytics {
 
 export class TradingAnalyticsService {
   /**
+   * Calculate core metrics for a session or user
+   */
+  async calculateCoreMetrics(
+    sessionId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<{
+    totalTrades: number;
+    winningTrades: number;
+    losingTrades: number;
+    winRate: number;
+    totalProfitLoss: number;
+    profitFactor: number;
+    averageWin: number;
+    averageLoss: number;
+    largestWin: number;
+    largestLoss: number;
+  }> {
+    await connectToDatabase();
+    
+    const session = await AutoTradingSession.findOne({ sessionId });
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    const query: any = { userId: session.userId, broker: session.broker };
+    if (dateRange?.startDate || dateRange?.endDate) {
+      query.entryTimestamp = {};
+      if (dateRange.startDate) query.entryTimestamp.$gte = dateRange.startDate;
+      if (dateRange.endDate) query.entryTimestamp.$lte = dateRange.endDate;
+    }
+
+    const closedTrades = await SignalistBotTrade.find({
+      ...query,
+      status: { $in: ['TP_HIT', 'SL_HIT', 'CLOSED'] },
+    });
+
+    const totalTrades = closedTrades.length;
+    const winningTrades = closedTrades.filter(t => (t.realizedPnl || 0) > 0);
+    const losingTrades = closedTrades.filter(t => (t.realizedPnl || 0) < 0);
+    const winRate = totalTrades > 0 ? (winningTrades.length / totalTrades) * 100 : 0;
+
+    const totalProfitLoss = closedTrades.reduce((sum, t) => sum + (t.realizedPnl || 0), 0);
+    const wins = winningTrades.map(t => t.realizedPnl || 0);
+    const losses = losingTrades.map(t => Math.abs(t.realizedPnl || 0));
+
+    const averageWin = wins.length > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
+    const averageLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
+    const largestWin = wins.length > 0 ? Math.max(...wins) : 0;
+    const largestLoss = losses.length > 0 ? -Math.max(...losses) : 0;
+
+    const totalWins = wins.reduce((a, b) => a + b, 0);
+    const totalLosses = losses.reduce((a, b) => a + b, 0);
+    const profitFactor = totalLosses > 0 ? totalWins / totalLosses : totalWins > 0 ? Infinity : 0;
+
+    return {
+      totalTrades,
+      winningTrades: winningTrades.length,
+      losingTrades: losingTrades.length,
+      winRate,
+      totalProfitLoss,
+      profitFactor,
+      averageWin,
+      averageLoss,
+      largestWin,
+      largestLoss,
+    };
+  }
+
+  /**
+   * Calculate risk-adjusted metrics
+   */
+  async calculateRiskMetrics(
+    sessionId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<{
+    roi: number;
+    sharpeRatio?: number;
+    maxDrawdown: number;
+    maxDrawdownPercent: number;
+    recoveryFactor?: number;
+    riskRewardRatio: number;
+  }> {
+    await connectToDatabase();
+    
+    const session = await AutoTradingSession.findOne({ sessionId });
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    const initialBalance = session.startBalance;
+    const currentBalance = session.endBalance || session.currentBalance || session.startBalance + session.totalProfitLoss;
+    const roi = initialBalance > 0 ? ((currentBalance - initialBalance) / initialBalance) * 100 : 0;
+
+    const maxDrawdown = session.maxDrawdown || 0;
+    const maxDrawdownPercent = session.startBalance > 0
+      ? (maxDrawdown / session.startBalance) * 100
+      : 0;
+
+    const recoveryFactor = maxDrawdown > 0
+      ? session.totalProfitLoss / maxDrawdown
+      : undefined;
+
+    // Calculate risk-reward ratio from trades
+    const query: any = { userId: session.userId, broker: session.broker };
+    if (dateRange?.startDate || dateRange?.endDate) {
+      query.entryTimestamp = {};
+      if (dateRange.startDate) query.entryTimestamp.$gte = dateRange.startDate;
+      if (dateRange.endDate) query.entryTimestamp.$lte = dateRange.endDate;
+    }
+
+    const closedTrades = await SignalistBotTrade.find({
+      ...query,
+      status: { $in: ['TP_HIT', 'SL_HIT', 'CLOSED'] },
+    });
+
+    const winningTrades = closedTrades.filter(t => (t.realizedPnl || 0) > 0);
+    const losingTrades = closedTrades.filter(t => (t.realizedPnl || 0) < 0);
+
+    const avgWin = winningTrades.length > 0
+      ? winningTrades.reduce((sum, t) => sum + (t.realizedPnl || 0), 0) / winningTrades.length
+      : 0;
+    const avgLoss = losingTrades.length > 0
+      ? Math.abs(losingTrades.reduce((sum, t) => sum + (t.realizedPnl || 0), 0) / losingTrades.length)
+      : 0;
+
+    const riskRewardRatio = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? Infinity : 0;
+
+    return {
+      roi,
+      maxDrawdown,
+      maxDrawdownPercent,
+      recoveryFactor,
+      riskRewardRatio,
+    };
+  }
+
+  /**
+   * Calculate activity metrics
+   */
+  async calculateActivityMetrics(
+    sessionId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<{
+    tradesPerDay: number;
+    averageTradesPerDay: number;
+    activeTradingDays: number;
+    sessionDuration: number; // in hours
+  }> {
+    await connectToDatabase();
+    
+    const session = await AutoTradingSession.findOne({ sessionId });
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    const query: any = { userId: session.userId, broker: session.broker };
+    if (dateRange?.startDate || dateRange?.endDate) {
+      query.entryTimestamp = {};
+      if (dateRange.startDate) query.entryTimestamp.$gte = dateRange.startDate;
+      if (dateRange.endDate) query.entryTimestamp.$lte = dateRange.endDate;
+    }
+
+    const trades = await SignalistBotTrade.find(query);
+    const dailyMap = new Map<string, number>();
+    
+    for (const trade of trades) {
+      const date = trade.entryTimestamp.toISOString().split('T')[0];
+      dailyMap.set(date, (dailyMap.get(date) || 0) + 1);
+    }
+
+    const tradesPerDay = Array.from(dailyMap.values());
+    const averageTradesPerDay = tradesPerDay.length > 0
+      ? tradesPerDay.reduce((a, b) => a + b, 0) / tradesPerDay.length
+      : 0;
+
+    const sessionDuration = session.stoppedAt
+      ? (session.stoppedAt.getTime() - session.startedAt.getTime()) / (1000 * 60 * 60)
+      : (Date.now() - session.startedAt.getTime()) / (1000 * 60 * 60);
+
+    return {
+      tradesPerDay: tradesPerDay.length,
+      averageTradesPerDay,
+      activeTradingDays: dailyMap.size,
+      sessionDuration,
+    };
+  }
+
+  /**
+   * Generate equity curve for a session
+   */
+  async generateEquityCurve(
+    sessionId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<Array<{
+    timestamp: Date;
+    balance: number;
+    equity: number;
+    drawdown: number;
+  }>> {
+    await connectToDatabase();
+    
+    const session = await AutoTradingSession.findOne({ sessionId });
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    const query: any = { userId: session.userId, broker: session.broker };
+    if (dateRange?.startDate || dateRange?.endDate) {
+      query.entryTimestamp = {};
+      if (dateRange.startDate) query.entryTimestamp.$gte = dateRange.startDate;
+      if (dateRange.endDate) query.entryTimestamp.$lte = dateRange.endDate;
+    }
+
+    const trades = await SignalistBotTrade.find(query)
+      .sort({ entryTimestamp: 1 });
+
+    const curve: Array<{ timestamp: Date; balance: number; equity: number; drawdown: number }> = [];
+    let runningBalance = session.startBalance;
+    let peakBalance = session.startBalance;
+
+    // Add initial point
+    curve.push({
+      timestamp: session.startedAt,
+      balance: runningBalance,
+      equity: runningBalance,
+      drawdown: 0,
+    });
+
+    // Add points for each trade
+    for (const trade of trades) {
+      if (trade.status === 'OPEN') {
+        runningBalance += trade.unrealizedPnl || 0;
+      } else {
+        runningBalance += trade.realizedPnl || 0;
+      }
+
+      if (runningBalance > peakBalance) {
+        peakBalance = runningBalance;
+      }
+
+      const drawdown = peakBalance - runningBalance;
+
+      curve.push({
+        timestamp: trade.exitTimestamp || trade.entryTimestamp,
+        balance: runningBalance - (trade.unrealizedPnl || 0),
+        equity: runningBalance,
+        drawdown,
+      });
+    }
+
+    return curve;
+  }
+
+  /**
+   * Get strategy breakdown by symbol
+   */
+  async getSymbolPerformance(
+    sessionId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<Array<{
+    symbol: string;
+    trades: number;
+    winRate: number;
+    profitLoss: number;
+    averageWin: number;
+    averageLoss: number;
+  }>> {
+    await connectToDatabase();
+    
+    const session = await AutoTradingSession.findOne({ sessionId });
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    const query: any = { userId: session.userId, broker: session.broker };
+    if (dateRange?.startDate || dateRange?.endDate) {
+      query.entryTimestamp = {};
+      if (dateRange.startDate) query.entryTimestamp.$gte = dateRange.startDate;
+      if (dateRange.endDate) query.entryTimestamp.$lte = dateRange.endDate;
+    }
+
+    const trades = await SignalistBotTrade.find({
+      ...query,
+      status: { $in: ['TP_HIT', 'SL_HIT', 'CLOSED'] },
+    });
+
+    const symbolMap = new Map<string, {
+      trades: number;
+      wins: number;
+      profitLoss: number;
+      winsList: number[];
+      lossesList: number[];
+    }>();
+
+    for (const trade of trades) {
+      const symbol = trade.symbol;
+      if (!symbolMap.has(symbol)) {
+        symbolMap.set(symbol, {
+          trades: 0,
+          wins: 0,
+          profitLoss: 0,
+          winsList: [],
+          lossesList: [],
+        });
+      }
+
+      const perf = symbolMap.get(symbol)!;
+      perf.trades++;
+      perf.profitLoss += trade.realizedPnl || 0;
+
+      if ((trade.realizedPnl || 0) > 0) {
+        perf.wins++;
+        perf.winsList.push(trade.realizedPnl || 0);
+      } else {
+        perf.lossesList.push(trade.realizedPnl || 0);
+      }
+    }
+
+    return Array.from(symbolMap.entries()).map(([symbol, perf]) => ({
+      symbol,
+      trades: perf.trades,
+      winRate: perf.trades > 0 ? (perf.wins / perf.trades) * 100 : 0,
+      profitLoss: perf.profitLoss,
+      averageWin: perf.winsList.length > 0
+        ? perf.winsList.reduce((a, b) => a + b, 0) / perf.winsList.length
+        : 0,
+      averageLoss: perf.lossesList.length > 0
+        ? Math.abs(perf.lossesList.reduce((a, b) => a + b, 0) / perf.lossesList.length)
+        : 0,
+    }));
+  }
+
+  /**
    * Get comprehensive analytics for a user
    */
   async getAnalytics(
@@ -363,4 +696,5 @@ export class TradingAnalyticsService {
 }
 
 export const tradingAnalyticsService = new TradingAnalyticsService();
+
 

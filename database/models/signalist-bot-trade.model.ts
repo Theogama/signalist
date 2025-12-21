@@ -33,7 +33,7 @@ export interface SignalistBotTradeDoc extends Document {
 const SignalistBotTradeSchema = new Schema<SignalistBotTradeDoc>(
   {
     tradeId: { type: String, required: true, unique: true, index: true },
-    userId: { type: String, required: true, index: true },
+    userId: { type: String, required: true },
     broker: { type: String, enum: ['exness', 'deriv'], required: true, index: true },
     symbol: { type: String, required: true, uppercase: true, index: true },
     side: { type: String, enum: ['BUY', 'SELL'], required: true },
@@ -78,6 +78,8 @@ SignalistBotTradeSchema.pre('save', function (next) {
 export const SignalistBotTrade: Model<SignalistBotTradeDoc> =
   (models?.SignalistBotTrade as Model<SignalistBotTradeDoc>) ||
   model<SignalistBotTradeDoc>('SignalistBotTrade', SignalistBotTradeSchema);
+
+
 
 
 

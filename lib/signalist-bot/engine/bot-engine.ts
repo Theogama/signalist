@@ -82,37 +82,63 @@ export class SignalistBotEngine extends EventEmitter {
       throw new Error('Bot is already running');
     }
 
-    // Connect to broker
+    // Connect to broker with timeout
     if (!this.adapter.isConnected()) {
-      await this.adapter.connect();
+      const connectPromise = this.adapter.connect();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Connection timeout')), 10000)
+      );
+      await Promise.race([connectPromise, timeoutPromise]);
     }
 
-    // Get initial balance
-    const balance = await this.adapter.getBalance();
+    // Get initial balance with timeout
+    const balancePromise = this.adapter.getBalance();
+    const balanceTimeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Balance fetch timeout')), 5000)
+    );
+    const balance = await Promise.race([balancePromise, balanceTimeoutPromise]) as number;
+    
     this.dayStartBalance = balance;
     this.status.dailyStats.startingBalance = balance;
     this.status.dailyStats.currentBalance = balance;
     this.status.startedAt = new Date();
     this.dayStartTime = new Date();
 
-    // Subscribe to candles
-    this.candleUnsubscribe = await this.adapter.subscribeToCandles(
+    // Subscribe to candles with timeout
+    const subscribePromise = this.adapter.subscribeToCandles(
       this.settings.instrument,
       this.settings.candleTimeframe,
       (candle: Candle) => this.onNewCandle(candle)
     );
+    const subscribeTimeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Candle subscription timeout')), 10000)
+    );
+    this.candleUnsubscribe = await Promise.race([subscribePromise, subscribeTimeoutPromise]) as () => void;
 
-    // Load historical candles
-    const historicalCandles = await this.adapter.getHistoricalCandles(
+    // Load historical candles with timeout (limit to prevent blocking)
+    const historicalCandlesPromise = this.adapter.getHistoricalCandles(
       this.settings.instrument,
       this.settings.candleTimeframe,
-      Math.max(this.settings.smaPeriod, 50)
+      Math.min(Math.max(this.settings.smaPeriod, 50), 100) // Limit to 100 candles max
     );
+    const historicalTimeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Historical candles timeout')), 15000)
+    );
+    const historicalCandles = await Promise.race([historicalCandlesPromise, historicalTimeoutPromise]) as Candle[];
 
-    // Add historical candles to strategy
-    historicalCandles.forEach((candle) => {
-      this.strategy.addCandle(candle);
-    });
+    // Add historical candles to strategy (batch process to avoid blocking)
+    // Process in chunks to prevent blocking the main thread
+    const chunkSize = 10;
+    for (let i = 0; i < historicalCandles.length; i += chunkSize) {
+      const chunk = historicalCandles.slice(i, i + chunkSize);
+      chunk.forEach((candle) => {
+        this.strategy.addCandle(candle);
+      });
+      // Yield to event loop every chunk
+      if (i + chunkSize < historicalCandles.length) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+    }
 
     this.isRunning = true;
     this.status.isRunning = true;
@@ -738,6 +764,8 @@ export class SignalistBotEngine extends EventEmitter {
     });
   }
 }
+
+
 
 
 

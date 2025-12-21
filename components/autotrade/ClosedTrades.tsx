@@ -21,7 +21,12 @@ export default function ClosedTrades() {
     
     setIsLoading(true);
     try {
-      const response = await fetch('/api/auto-trading/positions');
+      // Include broker parameter to ensure Deriv data is fetched
+      const url = connectedBroker === 'deriv' 
+        ? `/api/auto-trading/positions?broker=deriv`
+        : '/api/auto-trading/positions';
+      
+      const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.data.closedTrades) {
@@ -36,9 +41,20 @@ export default function ClosedTrades() {
   };
 
   useEffect(() => {
-    fetchClosedTrades();
-    const interval = setInterval(fetchClosedTrades, 10000); // Update every 10 seconds
+    // Don't fetch here - let the dashboard handle it to avoid duplicate calls
+    // Only fetch if dashboard hasn't loaded yet (fallback)
+    if (closedTrades.length === 0) {
+      fetchClosedTrades();
+    }
+    // Reduced polling - rely on dashboard and WebSocket for updates
+    const interval = setInterval(() => {
+      // Only fetch if we have no trades (initial load)
+      if (closedTrades.length === 0) {
+        fetchClosedTrades();
+      }
+    }, 20000); // Poll every 20 seconds as fallback
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedBroker]);
 
   const displayedTrades = showAll ? closedTrades : closedTrades.slice(0, 10);
@@ -97,6 +113,11 @@ export default function ClosedTrades() {
                         >
                           {trade.status}
                         </Badge>
+                        {connectedBroker === 'deriv' && (
+                          <Badge variant="outline" className="border-purple-500 text-purple-400 text-xs">
+                            DERIV
+                          </Badge>
+                        )}
                       </div>
                       
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
@@ -143,12 +164,19 @@ export default function ClosedTrades() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-4 text-xs text-gray-500">
-                        {trade.openedAt && (
-                          <span>Opened: {new Date(trade.openedAt).toLocaleString()}</span>
-                        )}
-                        {trade.closedAt && (
-                          <span>Closed: {new Date(trade.closedAt).toLocaleString()}</span>
+                      <div className="flex items-center justify-between text-xs text-gray-500">
+                        <div className="flex items-center gap-4">
+                          {trade.openedAt && (
+                            <span>Opened: {new Date(trade.openedAt).toLocaleString()}</span>
+                          )}
+                          {trade.closedAt && (
+                            <span>Closed: {new Date(trade.closedAt).toLocaleString()}</span>
+                          )}
+                        </div>
+                        {connectedBroker === 'deriv' && (trade as any).brokerTradeId && (
+                          <span className="text-purple-400">
+                            Contract: {(trade as any).brokerTradeId}
+                          </span>
                         )}
                       </div>
                     </div>

@@ -35,9 +35,11 @@ export class DerivAdapter implements UnifiedBrokerAdapter {
 
   async initialize(config: BrokerAdapterConfig): Promise<void> {
     this.config = config;
-    if (!config.derivToken) {
-      throw new Error('Deriv token is required');
+    // Allow empty token for demo/paper trading mode
+    if (!config.derivToken && !config.paperTrading) {
+      throw new Error('Deriv token is required for live trading');
     }
+    // If paper trading mode, we can proceed without token
   }
 
   async connect(): Promise<boolean> {
@@ -687,6 +689,8 @@ export class DerivAdapter implements UnifiedBrokerAdapter {
     }
   }
 }
+
+
 
 
 

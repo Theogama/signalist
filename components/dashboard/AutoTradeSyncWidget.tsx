@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import { useStatistics } from '@/lib/hooks/useStatistics';
 import { useAutoTradingStore } from '@/lib/stores/autoTradingStore';
+import { useWebSocket } from '@/lib/hooks/useWebSocket';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,12 +36,23 @@ export default function AutoTradeSyncWidget() {
     closedTrades,
     botParams,
   } = useAutoTradingStore();
+  
+  const { wsConnected } = useWebSocket();
 
   const [isClient, setIsClient] = useState(false);
-  const { stats: persistentStats } = useStatistics({ refreshInterval: 30000 });
+  const [mounted, setMounted] = useState(false);
+  
+  // Fetch statistics for all brokers, including Deriv
+  // Only enable after component is mounted to prevent SSR issues
+  const { stats: persistentStats } = useStatistics({ 
+    broker: null, // null = all brokers including Deriv
+    refreshInterval: 30000,
+    enabled: mounted
+  });
 
   useEffect(() => {
     setIsClient(true);
+    setMounted(true);
   }, []);
 
   // Calculate metrics (live data)
@@ -122,9 +134,18 @@ export default function AutoTradeSyncWidget() {
                 'Idle'
               )}
             </Badge>
+            {connectedBroker === 'deriv' && (
+              <Badge variant="outline" className="border-purple-500 text-purple-400 bg-purple-500/10">
+                DERIV LIVE
+              </Badge>
+            )}
+            {wsConnected && connectedBroker && (
+              <span className="h-2 w-2 bg-green-400 rounded-full animate-pulse ml-2" title="WebSocket connected" />
+            )}
           </CardTitle>
           <CardDescription>
-            Connected to {connectedBroker?.toUpperCase()} • {botStatus === 'running' ? 'Active Trading' : 'Monitoring'}
+            Connected to {connectedBroker?.toUpperCase()} {connectedBroker === 'deriv' && '• Live Data'} • {botStatus === 'running' ? 'Active Trading' : 'Monitoring'}
+            {wsConnected && ' • Real-time updates'}
           </CardDescription>
         </CardHeader>
         <CardContent>

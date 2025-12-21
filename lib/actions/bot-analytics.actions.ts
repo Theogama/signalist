@@ -2,6 +2,7 @@
 
 import { connectToDatabase } from '@/database/mongoose';
 import { BotTrade } from '@/database/models/bot-trade.model';
+import { SignalistBotTrade } from '@/database/models/signalist-bot-trade.model';
 import { auth } from '@/lib/better-auth/auth';
 import { headers } from 'next/headers';
 
@@ -29,7 +30,36 @@ export async function getBotAnalytics(): Promise<ActionResult<any>> {
     const user = await requireUser();
     await connectToDatabase();
 
-    const trades = await BotTrade.find({ userId: user.id }).lean();
+    // Fetch trades from both BotTrade (legacy) and SignalistBotTrade (includes Deriv)
+    const [legacyTrades, signalistTrades] = await Promise.all([
+      BotTrade.find({ userId: user.id }).lean(),
+      SignalistBotTrade.find({ userId: user.id }).lean(),
+    ]);
+
+    // Combine and normalize trades
+    const allTrades = [
+      ...legacyTrades.map(t => ({
+        ...t,
+        profitLoss: t.profitLoss || 0,
+        profitLossPct: t.profitLossPct || 0,
+        status: t.status || 'PENDING',
+        createdAt: t.createdAt || new Date(),
+      })),
+      ...signalistTrades.map(t => ({
+        ...t,
+        profitLoss: t.realizedPnl || t.unrealizedPnl || 0,
+        profitLossPct: t.realizedPnlPercent || 0,
+        status: t.status === 'OPEN' ? 'FILLED' : t.status === 'CLOSED' || t.status === 'TP_HIT' ? 'CLOSED' : 'PENDING',
+        createdAt: t.entryTimestamp || new Date(),
+        symbol: t.symbol,
+        action: t.side,
+        entryPrice: t.entryPrice,
+        exitPrice: t.exitPrice,
+        quantity: t.lotOrStake || 0,
+      })),
+    ];
+
+    const trades = allTrades;
 
     // Calculate metrics
     const totalTrades = trades.length;

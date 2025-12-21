@@ -21,25 +21,52 @@ export async function GET(request: NextRequest) {
     // Create SSE stream
     let interval: NodeJS.Timeout | null = null;
     let unsubscribe: (() => void) | null = null;
+    let isClosed = false;
     
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
         
+        // Helper function to safely enqueue data
+        const safeEnqueue = (data: Uint8Array) => {
+          try {
+            if (!isClosed) {
+              controller.enqueue(data);
+            }
+          } catch (error: any) {
+            // Controller might be closed
+            if (error.code === 'ERR_INVALID_STATE' || error.message?.includes('closed')) {
+              isClosed = true;
+              if (interval) {
+                clearInterval(interval);
+                interval = null;
+              }
+              if (unsubscribe) {
+                unsubscribe();
+                unsubscribe = null;
+              }
+            } else {
+              console.error('Error enqueueing data:', error);
+            }
+          }
+        };
+        
         // Track previous closed trades to detect new ones (scoped to this stream)
         const previousClosedTradeIds = new Set<string>();
         
         // Send initial connection message
-        controller.enqueue(
+        safeEnqueue(
           encoder.encode(`data: ${JSON.stringify({ type: 'connected', message: 'Live updates connected' })}\n\n`)
         );
 
         // Subscribe to log events
         unsubscribe = logEmitter.subscribe(userId, (log) => {
           try {
+            if (isClosed) return;
+            
             // If log has balance data, send it as a balance update
             if (log.type === 'balance' && log.data) {
-              controller.enqueue(
+              safeEnqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({
                     type: 'balance',
@@ -54,7 +81,7 @@ export async function GET(request: NextRequest) {
               const trade = log.data;
               if (trade.status && ['CLOSED', 'TP_HIT', 'SL_HIT', 'STOPPED'].includes(trade.status)) {
                 // Send immediate trade_closed event
-                controller.enqueue(
+                safeEnqueue(
                   encoder.encode(
                     `data: ${JSON.stringify({
                       type: 'trade_closed',
@@ -76,7 +103,7 @@ export async function GET(request: NextRequest) {
             }
             
             // Always send log events
-            controller.enqueue(
+            safeEnqueue(
               encoder.encode(`data: ${JSON.stringify({ type: 'log', data: log })}\n\n`)
             );
           } catch (error) {
@@ -93,6 +120,15 @@ export async function GET(request: NextRequest) {
         // Set up interval to send updates with prioritized timing
         interval = setInterval(async () => {
           try {
+            // Check if stream is closed before processing
+            if (isClosed) {
+              if (interval) {
+                clearInterval(interval);
+                interval = null;
+              }
+              return;
+            }
+            
             const activeBots = botManager.getUserBots(userId);
             
             if (activeBots.length === 0) {
@@ -176,9 +212,9 @@ export async function GET(request: NextRequest) {
                   
                   // IMMEDIATE: Detect new closed trades and send instant events
                   recentClosed.forEach((trade) => {
-                    if (!previousClosedTradeIds.has(trade.id)) {
+                    if (!previousClosedTradeIds.has(trade.id) && !isClosed) {
                       // New closed trade - send IMMEDIATE event (highest priority)
-                      controller.enqueue(
+                      safeEnqueue(
                         encoder.encode(
                           `data: ${JSON.stringify({
                             type: 'trade_closed',
@@ -198,8 +234,8 @@ export async function GET(request: NextRequest) {
             }
 
             // PRIORITY: Send open trades update (every 500ms when trades exist)
-            if (shouldUpdateTrades && openTrades.length > 0) {
-              controller.enqueue(
+            if (shouldUpdateTrades && openTrades.length > 0 && !isClosed) {
+              safeEnqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({
                     type: 'open_trades',
@@ -213,9 +249,9 @@ export async function GET(request: NextRequest) {
             }
 
             // PRIORITY: Send position updates for open trades (real-time P/L)
-            if (shouldUpdateTrades) {
+            if (shouldUpdateTrades && !isClosed) {
               openTrades.forEach((trade) => {
-                controller.enqueue(
+                safeEnqueue(
                   encoder.encode(
                     `data: ${JSON.stringify({
                       type: 'position_update',
@@ -235,7 +271,7 @@ export async function GET(request: NextRequest) {
             }
 
             // Send balance update (less frequent - every 1s)
-            if (shouldUpdateBalance && activeBots.length > 0) {
+            if (shouldUpdateBalance && activeBots.length > 0 && !isClosed) {
               let balanceToSend;
               if (totalBalance > 0) {
                 balanceToSend = {
@@ -264,7 +300,7 @@ export async function GET(request: NextRequest) {
                 };
               }
               
-              controller.enqueue(
+              safeEnqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({
                     type: 'balance',
@@ -278,8 +314,8 @@ export async function GET(request: NextRequest) {
             }
 
             // Send closed trades update (only if there are new ones)
-            if (shouldUpdateTrades && closedTrades.length > 0) {
-              controller.enqueue(
+            if (shouldUpdateTrades && closedTrades.length > 0 && !isClosed) {
+              safeEnqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({
                     type: 'closed_trades',
@@ -290,15 +326,30 @@ export async function GET(request: NextRequest) {
                 )
               );
             }
-          } catch (error) {
-            console.error('Error sending live update:', error);
+          } catch (error: any) {
+            // Check if error is due to closed controller
+            if (error.code === 'ERR_INVALID_STATE' || error.message?.includes('closed')) {
+              isClosed = true;
+              if (interval) {
+                clearInterval(interval);
+                interval = null;
+              }
+              if (unsubscribe) {
+                unsubscribe();
+                unsubscribe = null;
+              }
+            } else {
+              console.error('Error sending live update:', error);
+            }
           }
         }, 250); // Check every 250ms, but send updates based on priority intervals
       },
       cancel() {
         // Cleanup on close
+        isClosed = true;
         if (unsubscribe) {
           unsubscribe();
+          unsubscribe = null;
         }
         if (interval) {
           clearInterval(interval);

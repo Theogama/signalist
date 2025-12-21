@@ -36,12 +36,18 @@ export class PaperTrader implements IPaperTrader {
     try {
       await connectToDatabase();
       
-      // Use findOneAndUpdate with upsert to handle race conditions and duplicates
-      const account = await DemoAccount.findOneAndUpdate(
-        { userId: this.userId, broker: this.broker },
-        {
-          // Only set these if creating new account (upsert)
-          $setOnInsert: {
+      // First try to find existing account to avoid duplicate key errors
+      let account = await DemoAccount.findOne({ 
+        userId: this.userId, 
+        broker: this.broker 
+      });
+
+      if (!account) {
+        // Only create if it doesn't exist
+        try {
+          account = await DemoAccount.create({
+            userId: this.userId,
+            broker: this.broker,
             balance: this.initialBalance,
             equity: this.initialBalance,
             margin: 0,
@@ -52,14 +58,20 @@ export class PaperTrader implements IPaperTrader {
             totalTrades: 0,
             winningTrades: 0,
             losingTrades: 0,
-          },
-        },
-        {
-          upsert: true,
-          new: true,
-          setDefaultsOnInsert: true,
+          });
+        } catch (createError: any) {
+          // Handle duplicate key error - account might have been created by another request
+          if (createError.code === 11000) {
+            // Try to find the account that was just created
+            account = await DemoAccount.findOne({ 
+              userId: this.userId, 
+              broker: this.broker 
+            });
+          } else {
+            throw createError;
+          }
         }
-      );
+      }
       
       if (!account) {
         throw new Error('Failed to create or retrieve demo account');

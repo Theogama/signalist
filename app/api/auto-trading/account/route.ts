@@ -117,15 +117,39 @@ export async function GET(request: NextRequest) {
     const userBots = botManager.getUserBots(session.user.id);
     let balanceData = null;
 
+    // For Deriv, always try to get from database first (even if no active bots)
+    if (brokerType === 'deriv') {
+      try {
+        const account = await DemoAccount.findOne({ 
+          userId: session.user.id, 
+          broker: 'deriv' 
+        });
+        
+        if (account) {
+          balanceData = {
+            balance: account.balance,
+            equity: account.equity,
+            margin: account.margin,
+            freeMargin: account.freeMargin,
+            currency: account.currency || 'USD',
+            marginLevel: account.margin > 0 ? (account.equity / account.margin) * 100 : 0,
+          };
+        }
+      } catch (error) {
+        console.error('Error fetching Deriv account from database:', error);
+      }
+    }
+
     // Check if there's an active bot with PaperTrader for this broker
     // Prioritize bot that matches the requested broker
     for (const bot of userBots) {
       if (bot.paperTrader && bot.isRunning) {
         // Get balance from PaperTrader (this recalculates equity with latest prices)
         // PaperTrader recalculates equity on getBalance() call
-        balanceData = bot.paperTrader.getBalance();
+        const ptBalance = bot.paperTrader.getBalance();
         // If broker matches, use this one; otherwise continue to find matching broker
         if (bot.broker === brokerType || brokerType === 'demo') {
+          balanceData = ptBalance;
           break;
         }
       }
@@ -171,11 +195,18 @@ export async function GET(request: NextRequest) {
         } else {
           // Create default account if doesn't exist (use upsert to handle duplicates)
           try {
-            // Use findOneAndUpdate with upsert to atomically create or get existing account
-            const newAccount = await DemoAccount.findOneAndUpdate(
-              { userId: session.user.id, broker: brokerType },
-              {
-                $setOnInsert: {
+            // First, try to find existing account to avoid duplicate key errors
+            let newAccount = await DemoAccount.findOne({ 
+              userId: session.user.id, 
+              broker: brokerType 
+            });
+
+            if (!newAccount) {
+              // Only create if it doesn't exist
+              try {
+                newAccount = await DemoAccount.create({
+                  userId: session.user.id,
+                  broker: brokerType,
                   balance: 10000,
                   equity: 10000,
                   margin: 0,
@@ -186,15 +217,20 @@ export async function GET(request: NextRequest) {
                   totalTrades: 0,
                   winningTrades: 0,
                   losingTrades: 0,
-                },
-              },
-              {
-                upsert: true,
-                new: true,
-                setDefaultsOnInsert: true,
-                runValidators: false, // Skip validation to avoid issues
+                });
+              } catch (createError: any) {
+                // Handle duplicate key error - account might have been created by another request
+                if (createError.code === 11000) {
+                  // Duplicate key error - try to find the account that was just created
+                  newAccount = await DemoAccount.findOne({ 
+                    userId: session.user.id, 
+                    broker: brokerType 
+                  });
+                } else {
+                  throw createError;
+                }
               }
-            );
+            }
 
             if (newAccount) {
               balanceData = {
@@ -205,30 +241,14 @@ export async function GET(request: NextRequest) {
                 currency: newAccount.currency,
               };
             } else {
-              // If upsert didn't return a document, try to find it (race condition handling)
-              const foundAccount = await DemoAccount.findOne({ 
-                userId: session.user.id, 
-                broker: brokerType 
-              }).lean();
-              
-              if (foundAccount) {
-                balanceData = {
-                  balance: foundAccount.balance,
-                  equity: foundAccount.equity,
-                  margin: foundAccount.margin,
-                  freeMargin: foundAccount.freeMargin,
-                  currency: foundAccount.currency,
-                };
-              } else {
-                // Fallback to default values
-                balanceData = {
-                  balance: 10000,
-                  equity: 10000,
-                  margin: 0,
-                  freeMargin: 10000,
-                  currency: 'USD',
-                };
-              }
+              // Fallback to default values
+              balanceData = {
+                balance: 10000,
+                equity: 10000,
+                margin: 0,
+                freeMargin: 10000,
+                currency: 'USD',
+              };
             }
           } catch (createError: any) {
             // Handle any errors (including duplicate key) by trying to load existing account
@@ -334,21 +354,64 @@ export async function POST(request: NextRequest) {
     const balance = initialBalance || 10000;
 
     if (action === 'reset') {
-      const account = await DemoAccount.findOneAndUpdate(
-        { userId: session.user.id, broker: brokerType },
-        {
-          balance,
-          equity: balance,
-          margin: 0,
-          freeMargin: balance,
-          initialBalance: balance,
-          totalProfitLoss: 0,
-          totalTrades: 0,
-          winningTrades: 0,
-          losingTrades: 0,
-        },
-        { upsert: true, new: true }
-      );
+      // First try to find existing account
+      let account = await DemoAccount.findOne({ 
+        userId: session.user.id, 
+        broker: brokerType 
+      });
+
+      if (account) {
+        // Update existing account
+        account.balance = balance;
+        account.equity = balance;
+        account.margin = 0;
+        account.freeMargin = balance;
+        account.initialBalance = balance;
+        account.totalProfitLoss = 0;
+        account.totalTrades = 0;
+        account.winningTrades = 0;
+        account.losingTrades = 0;
+        await account.save();
+      } else {
+        // Create new account if doesn't exist
+        try {
+          account = await DemoAccount.create({
+            userId: session.user.id,
+            broker: brokerType,
+            balance,
+            equity: balance,
+            margin: 0,
+            freeMargin: balance,
+            initialBalance: balance,
+            totalProfitLoss: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+          });
+        } catch (createError: any) {
+          // Handle duplicate key error - account might have been created by another request
+          if (createError.code === 11000) {
+            account = await DemoAccount.findOne({ 
+              userId: session.user.id, 
+              broker: brokerType 
+            });
+            if (account) {
+              account.balance = balance;
+              account.equity = balance;
+              account.margin = 0;
+              account.freeMargin = balance;
+              account.initialBalance = balance;
+              account.totalProfitLoss = 0;
+              account.totalTrades = 0;
+              account.winningTrades = 0;
+              account.losingTrades = 0;
+              await account.save();
+            }
+          } else {
+            throw createError;
+          }
+        }
+      }
 
       return NextResponse.json({
         success: true,

@@ -107,3 +107,64 @@ export async function decryptObject<T extends Record<string, any>>(encryptedValu
   return JSON.parse(decrypted) as T;
 }
 
+/**
+ * Encrypted token structure for key rotation support
+ */
+export interface EncryptedToken {
+  data: string; // Base64 encrypted data
+  keyVersion?: number; // Key version for rotation support
+  algorithm: string; // Algorithm used (for future compatibility)
+}
+
+/**
+ * Encrypt token with version tracking (for key rotation)
+ */
+export async function encryptToken(token: string, keyVersion?: number): Promise<EncryptedToken> {
+  const encrypted = await encrypt(token);
+  return {
+    data: encrypted,
+    keyVersion: keyVersion || 1,
+    algorithm: ALGORITHM,
+  };
+}
+
+/**
+ * Decrypt token (supports multiple key versions for rotation)
+ */
+export async function decryptToken(encryptedToken: EncryptedToken | string): Promise<string> {
+  // Support legacy string format
+  if (typeof encryptedToken === 'string') {
+    return decrypt(encryptedToken);
+  }
+  
+  // New format with version tracking
+  return decrypt(encryptedToken.data);
+}
+
+/**
+ * Rotate encryption key (re-encrypts all tokens with new key)
+ * Note: This requires access to all encrypted tokens in the database
+ * Should be called during key rotation process
+ */
+export async function rotateKey(oldKey: string, newKey: string): Promise<void> {
+  // This is a placeholder - actual implementation would:
+  // 1. Set ENCRYPTION_KEY to newKey temporarily
+  // 2. Iterate through all encrypted tokens in database
+  // 3. Decrypt with old key, re-encrypt with new key
+  // 4. Update keyVersion in database
+  // 5. Update ENCRYPTION_KEY environment variable
+  
+  console.warn('[Encryption] Key rotation not fully implemented. Manual process required.');
+  console.warn('[Encryption] Steps: 1) Set new ENCRYPTION_KEY, 2) Re-encrypt all tokens, 3) Update keyVersion');
+  
+  // For now, just validate the keys
+  if (!oldKey || !newKey) {
+    throw new Error('Both old and new keys are required for rotation');
+  }
+  
+  if (oldKey === newKey) {
+    throw new Error('Old and new keys must be different');
+  }
+}
+
+

@@ -5,6 +5,7 @@
  * Displays comprehensive persistent trading statistics from database
  */
 
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useStatistics } from '@/lib/hooks/useStatistics';
 import { Badge } from '@/components/ui/badge';
@@ -58,7 +59,19 @@ interface TradingStatistics {
 }
 
 export default function TradingStatisticsPanel() {
-  const { stats, loading, error } = useStatistics({ refreshInterval: 30000 });
+  const [mounted, setMounted] = useState(false);
+  
+  // Fetch statistics for all brokers, including Deriv
+  // Only enable after component is mounted to prevent SSR issues
+  const { stats, loading, error } = useStatistics({ 
+    broker: null, // null = all brokers including Deriv
+    refreshInterval: 30000,
+    enabled: mounted
+  });
+  
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   if (loading) {
     return (

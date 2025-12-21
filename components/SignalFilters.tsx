@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -11,10 +11,26 @@ export default function SignalFilters() {
   const router = useRouter();
   const searchParams = useSearchParams();
   
-  const [status, setStatus] = useState(searchParams.get('status') || 'active');
-  const [action, setAction] = useState(searchParams.get('action') || 'all');
-  const [source, setSource] = useState(searchParams.get('source') || 'all');
-  const [search, setSearch] = useState(searchParams.get('search') || '');
+  // Use useEffect to sync with URL params to avoid hydration mismatches
+  const [status, setStatus] = useState(() => searchParams.get('status') || 'active');
+  const [action, setAction] = useState(() => searchParams.get('action') || 'all');
+  const [source, setSource] = useState(() => searchParams.get('source') || 'all');
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
+  
+  // Sync state with URL params on mount/change (client-side only to avoid hydration issues)
+  useEffect(() => {
+    const urlStatus = searchParams.get('status') || 'active';
+    const urlAction = searchParams.get('action') || 'all';
+    const urlSource = searchParams.get('source') || 'all';
+    const urlSearch = searchParams.get('search') || '';
+    
+    // Only update if different to avoid unnecessary re-renders
+    if (urlStatus !== status) setStatus(urlStatus);
+    if (urlAction !== action) setAction(urlAction);
+    if (urlSource !== source) setSource(urlSource);
+    if (urlSearch !== search) setSearch(urlSearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const applyFilters = () => {
     const params = new URLSearchParams();

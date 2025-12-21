@@ -67,11 +67,18 @@ export async function POST(request: NextRequest) {
         try {
           const DerivAdapter = (await import('@/lib/auto-trading/adapters/DerivAdapter')).DerivAdapter;
           const demoAdapter = new DerivAdapter();
-          await demoAdapter.initialize({
+          
+          // Add timeout to adapter initialization to prevent hanging
+          const initPromise = demoAdapter.initialize({
             apiKey: '',
             apiSecret: '',
             environment: 'demo',
           });
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Adapter initialization timeout')), 10000)
+          );
+          
+          await Promise.race([initPromise, timeoutPromise]);
           demoAdapter.setPaperTrading(true);
           
           // Store it in session manager for future use
@@ -111,7 +118,13 @@ export async function POST(request: NextRequest) {
       try {
         // Only authenticate if adapter is not already authenticated
         if (!(adapter as any).authenticated) {
-          const authenticated = await adapter.authenticate();
+          // Add timeout to authentication to prevent hanging
+          const authPromise = adapter.authenticate();
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Authentication timeout')), 10000)
+          );
+          
+          const authenticated = await Promise.race([authPromise, timeoutPromise]) as boolean;
           if (!authenticated) {
             return NextResponse.json(
               { success: false, error: 'Broker authentication failed. Please reconnect your broker.' },

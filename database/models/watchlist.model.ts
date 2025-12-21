@@ -9,7 +9,7 @@ export interface WatchlistItem extends Document {
 
 const WatchlistSchema = new Schema<WatchlistItem>(
   {
-    userId: { type: String, required: true, index: true },
+    userId: { type: String, required: true },
     symbol: { type: String, required: true, uppercase: true, trim: true },
     company: { type: String, required: true, trim: true },
     addedAt: { type: Date, default: Date.now },

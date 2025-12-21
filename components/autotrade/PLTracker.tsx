@@ -102,7 +102,7 @@ export default function PLTracker() {
     }
   }, [openTrades, closedTrades]);
 
-  // Fetch from API on mount and periodically (optimized for Exness/Deriv)
+  // Fetch from API on mount and periodically (optimized for performance)
   useEffect(() => {
     if (!connectedBroker) {
       setMetrics(prev => ({ ...prev, isLoading: false }));
@@ -110,9 +110,9 @@ export default function PLTracker() {
     }
     
     fetchPLMetrics();
-    // PRIORITY: Faster updates for Exness/Deriv (even in demo mode)
-    // Update every 1 second for balance/metrics, but rely on WebSocket for trades
-    const interval = setInterval(fetchPLMetrics, 1000);
+    // Reduced polling frequency - rely on WebSocket and store updates for real-time data
+    // Calculate P/L from store data in real-time, only fetch from API periodically
+    const interval = setInterval(fetchPLMetrics, 5000); // Poll every 5 seconds
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedBroker]);

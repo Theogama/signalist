@@ -20,7 +20,12 @@ export default function OpenTrades() {
     
     setIsLoading(true);
     try {
-      const response = await fetch('/api/auto-trading/positions');
+      // Include broker parameter to ensure Deriv data is fetched
+      const url = connectedBroker === 'deriv' 
+        ? `/api/auto-trading/positions?broker=deriv`
+        : '/api/auto-trading/positions';
+      
+      const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.data.openTrades) {
@@ -35,9 +40,20 @@ export default function OpenTrades() {
   };
 
   useEffect(() => {
-    fetchOpenTrades();
-    const interval = setInterval(fetchOpenTrades, 5000); // Update every 5 seconds
+    // Don't fetch here - let the dashboard handle it to avoid duplicate calls
+    // Only fetch if dashboard hasn't loaded yet (fallback)
+    if (openTrades.length === 0) {
+      fetchOpenTrades();
+    }
+    // Reduced polling - rely on dashboard and WebSocket for updates
+    const interval = setInterval(() => {
+      // Only fetch if we have no trades (initial load)
+      if (openTrades.length === 0) {
+        fetchOpenTrades();
+      }
+    }, 15000); // Poll every 15 seconds as fallback
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedBroker]);
 
   // Calculate unrealized P/L for each trade
@@ -103,6 +119,11 @@ export default function OpenTrades() {
                       <Badge variant="outline" className="border-blue-500 text-blue-400">
                         {trade.status}
                       </Badge>
+                      {connectedBroker === 'deriv' && (
+                        <Badge variant="outline" className="border-purple-500 text-purple-400 text-xs">
+                          DERIV
+                        </Badge>
+                      )}
                     </div>
                     
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -141,8 +162,13 @@ export default function OpenTrades() {
                       </div>
                     </div>
 
-                    <div className="text-xs text-gray-500">
-                      Opened: {new Date(trade.openedAt).toLocaleString()}
+                    <div className="flex items-center justify-between text-xs text-gray-500">
+                      <span>Opened: {new Date(trade.openedAt).toLocaleString()}</span>
+                      {connectedBroker === 'deriv' && (trade as any).brokerTradeId && (
+                        <span className="text-purple-400">
+                          Contract: {(trade as any).brokerTradeId}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

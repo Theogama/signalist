@@ -19,6 +19,9 @@ export async function GET(request: NextRequest) {
     }
 
     const userId = session.user.id;
+    const { searchParams } = new URL(request.url);
+    const broker = searchParams.get('broker') as 'exness' | 'deriv' | null;
+    
     const activeBots = botManager.getUserBots(userId);
 
     const openTrades: any[] = [];
@@ -27,8 +30,30 @@ export async function GET(request: NextRequest) {
     let totalEquity = 0;
     let totalMargin = 0;
 
-    // If no active bots, return default values
-    if (activeBots.length === 0) {
+    // Only fetch Deriv trades if explicitly requested or if no other broker data exists
+    // This reduces unnecessary database queries
+    const shouldFetchDeriv = broker === 'deriv' || (!broker && activeBots.length === 0);
+    
+    if (shouldFetchDeriv) {
+      try {
+        const { syncDerivPositions } = await import('@/lib/services/deriv-trading.service');
+        const derivPositions = await syncDerivPositions(userId, ''); // API key not needed for DB fetch
+        
+        // Add Deriv trades
+        if (derivPositions.openTrades.length > 0) {
+          openTrades.push(...derivPositions.openTrades);
+        }
+        if (derivPositions.closedTrades.length > 0) {
+          closedTrades.push(...derivPositions.closedTrades);
+        }
+      } catch (error) {
+        console.error('[Positions API] Error fetching Deriv positions:', error);
+        // Continue even if Deriv fetch fails
+      }
+    }
+
+    // If no active bots and no Deriv trades, return default values
+    if (activeBots.length === 0 && openTrades.length === 0 && closedTrades.length === 0) {
       return NextResponse.json({
         success: true,
         data: {
@@ -42,16 +67,6 @@ export async function GET(request: NextRequest) {
           },
         },
       });
-    }
-
-    // Check if user has Deriv trades in database
-    const { syncDerivPositions } = await import('@/lib/services/deriv-trading.service');
-    const derivPositions = await syncDerivPositions(userId, ''); // API key not needed for DB fetch
-    
-    if (derivPositions.openTrades.length > 0 || derivPositions.closedTrades.length > 0) {
-      // Add Deriv trades
-      openTrades.push(...derivPositions.openTrades);
-      closedTrades.push(...derivPositions.closedTrades);
     }
 
     for (const bot of activeBots) {
@@ -89,6 +104,28 @@ export async function GET(request: NextRequest) {
           openedAt: trade.openedAt,
           closedAt: trade.closedAt,
         })));
+      }
+    }
+
+    // If we have Deriv trades but no active bots, try to get balance from DemoAccount
+    if (shouldFetchDeriv && (openTrades.length > 0 || closedTrades.length > 0) && totalBalance === 0) {
+      try {
+        // Ensure database is connected before querying
+        const { DemoAccount } = await import('@/database/models/demo-account.model');
+        const { connectToDatabase } = await import('@/database/mongoose');
+        
+        // Connect to database (idempotent, safe to call multiple times)
+        await connectToDatabase();
+        
+        const account = await DemoAccount.findOne({ userId, broker: 'deriv' });
+        if (account) {
+          totalBalance = account.balance || 0;
+          totalEquity = account.equity || 0;
+          totalMargin = account.margin || 0;
+        }
+      } catch (error) {
+        console.error('[Positions API] Error fetching Deriv account:', error);
+        // Continue with default values if error occurs
       }
     }
 

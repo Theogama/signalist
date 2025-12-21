@@ -153,22 +153,35 @@ class BotManagerService {
       { botId, instrument, paperTrading }
     );
     
+    // Set up interval for trading loop (non-blocking)
     const intervalId = setInterval(async () => {
-      await this.executeTradingLoop(activeBot);
+      try {
+        await this.executeTradingLoop(activeBot);
+      } catch (error: any) {
+        console.error(`[BotManager] Error in trading loop for ${botId}:`, error);
+        logEmitter.error(
+          `Error in trading loop: ${error.message}`,
+          userId,
+          { botId, error: error.message }
+        );
+      }
     }, 5000); // Check every 5 seconds
 
     activeBot.intervalId = intervalId;
     this.activeBots.set(botKey, activeBot);
     
-    // Execute first loop immediately
-    this.executeTradingLoop(activeBot).catch((error) => {
-      console.error(`Error in initial trading loop for bot ${botId}:`, error);
-      logEmitter.error(
-        `Error in trading loop: ${error.message}`,
-        userId,
-        { botId, error: error.message }
-      );
-    });
+    // Execute first loop asynchronously after a short delay to prevent blocking
+    // This allows the start API to return quickly
+    setTimeout(() => {
+      this.executeTradingLoop(activeBot).catch((error) => {
+        console.error(`[BotManager] Error in initial trading loop for bot ${botId}:`, error);
+        logEmitter.error(
+          `Error in initial trading loop: ${error.message}`,
+          userId,
+          { botId, error: error.message }
+        );
+      });
+    }, 1000); // Start after 1 second delay
 
     return botKey;
   }
@@ -242,8 +255,13 @@ class BotManagerService {
       
       if (bot.paperTrader) {
         // For paper trading, try to get real market data first, fallback to mock
+        // Add timeout to prevent hanging on slow market data requests
         try {
-          const livePrice = await marketDataService.getCurrentPrice(bot.instrument);
+          const livePricePromise = marketDataService.getCurrentPrice(bot.instrument);
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Market data request timeout')), 3000)
+          );
+          const livePrice = await Promise.race([livePricePromise, timeoutPromise]) as any;
           if (livePrice) {
             marketData = {
               symbol: bot.instrument,
@@ -281,17 +299,26 @@ class BotManagerService {
           };
         }
       } else if (bot.adapter) {
-        marketData = await bot.adapter.getMarketData(bot.instrument);
+        // Add timeout to adapter market data fetch
+        const marketDataPromise = bot.adapter.getMarketData(bot.instrument);
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Market data timeout')), 5000)
+        );
+        marketData = await Promise.race([marketDataPromise, timeoutPromise]) as MarketData;
       } else {
         return; // No adapter and no paper trader
       }
 
-      // Get balance
+      // Get balance with timeout protection
       let balance: number;
       if (bot.paperTrader) {
         balance = bot.paperTrader.getBalance().balance;
       } else if (bot.adapter) {
-        const accountBalance = await bot.adapter.getBalance();
+        const balancePromise = bot.adapter.getBalance();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Balance fetch timeout')), 5000)
+        );
+        const accountBalance = await Promise.race([balancePromise, timeoutPromise]) as any;
         balance = accountBalance.balance;
       } else {
         return;
@@ -314,7 +341,12 @@ class BotManagerService {
           openedAt: p.position.openedAt || new Date(),
         }));
       } else if (bot.adapter) {
-        const adapterPositions = await bot.adapter.getOpenPositions();
+        // Add timeout to positions fetch
+        const positionsPromise = bot.adapter.getOpenPositions();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Positions fetch timeout')), 5000)
+        );
+        const adapterPositions = await Promise.race([positionsPromise, timeoutPromise]) as any[];
         openPositions = adapterPositions.map((p) => ({
           positionId: p.positionId,
           symbol: p.symbol,
@@ -373,8 +405,18 @@ class BotManagerService {
         }
       );
 
-      // Analyze market and get signal (pass historical data)
-      const signal = await bot.strategy.analyze(marketData, bot.historicalData);
+      // Analyze market and get signal (pass historical data) with timeout
+      let signal: any = null;
+      try {
+        const analyzePromise = bot.strategy.analyze(marketData, bot.historicalData);
+        const analyzeTimeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Strategy analysis timeout')), 10000)
+        );
+        signal = await Promise.race([analyzePromise, analyzeTimeoutPromise]);
+      } catch (error) {
+        console.warn(`[BotManager] Strategy analysis timeout or error for ${bot.instrument}:`, error);
+        // Continue without signal rather than blocking
+      }
 
       if (!signal) {
         // Log why no signal was generated (only occasionally to avoid spam)

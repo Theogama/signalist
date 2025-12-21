@@ -20,7 +20,7 @@ export interface UserBotSettingsDoc extends Document {
 
 const UserBotSettingsSchema = new Schema<UserBotSettingsDoc>(
   {
-    userId: { type: String, required: true, unique: true, index: true },
+    userId: { type: String, required: true, unique: true },
     enabled: { type: Boolean, default: false },
     maxTradeSizePct: { type: Number, default: 5, min: 0.1, max: 100 }, // Default 5% of balance
     stopLossPct: { type: Number, default: 2, min: 0.1, max: 50 }, // Default 2% stop loss

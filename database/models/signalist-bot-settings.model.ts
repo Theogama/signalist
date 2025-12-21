@@ -42,7 +42,7 @@ export interface SignalistBotSettingsDoc extends Document {
 
 const SignalistBotSettingsSchema = new Schema<SignalistBotSettingsDoc>(
   {
-    userId: { type: String, required: true, index: true },
+    userId: { type: String, required: true },
     broker: { type: String, enum: ['exness', 'deriv'], required: true },
     instrument: { type: String, required: true },
     enabled: { type: Boolean, default: false },
@@ -99,6 +99,8 @@ SignalistBotSettingsSchema.pre('save', function (next) {
 export const SignalistBotSettings: Model<SignalistBotSettingsDoc> =
   (models?.SignalistBotSettings as Model<SignalistBotSettingsDoc>) ||
   model<SignalistBotSettingsDoc>('SignalistBotSettings', SignalistBotSettingsSchema);
+
+
 
 
 

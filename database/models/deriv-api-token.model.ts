@@ -22,7 +22,7 @@ export interface DerivApiTokenDoc extends Document {
 
 const DerivApiTokenSchema = new Schema<DerivApiTokenDoc>(
   {
-    userId: { type: String, required: true, unique: true, index: true },
+    userId: { type: String, required: true, unique: true },
     token: { type: String, required: true, select: false }, // Encrypted, don't return by default
     accountType: { type: String, enum: ['demo', 'real'], required: true, index: true },
     accountId: { type: String, index: true },
@@ -52,4 +52,6 @@ DerivApiTokenSchema.pre('save', function (next) {
 export const DerivApiToken: Model<DerivApiTokenDoc> =
   (models?.DerivApiToken as Model<DerivApiTokenDoc>) ||
   model<DerivApiTokenDoc>('DerivApiToken', DerivApiTokenSchema);
+
+
 

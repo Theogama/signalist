@@ -59,6 +59,7 @@ export async function POST(request: NextRequest) {
       maxStakeSize: riskSettings?.maxStakeSize || 0, // 0 means no limit
       riskPerTrade: riskSettings?.riskPerTrade || botSettings?.riskPerTrade || 10,
       autoStopDrawdown: riskSettings?.autoStopDrawdown || botSettings?.forceStopDrawdown || 0,
+      maxConsecutiveLosses: riskSettings?.maxConsecutiveLosses || botSettings?.maxConsecutiveLosses,
     };
 
     // Get auto-trading service
@@ -90,4 +91,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
 

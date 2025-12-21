@@ -8,8 +8,10 @@
 import { useEffect, useState } from 'react';
 import { useStatistics } from '@/lib/hooks/useStatistics';
 import { useAutoTradingStore } from '@/lib/stores/autoTradingStore';
+import { useWebSocket } from '@/lib/hooks/useWebSocket';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
 import { TrendingUp, Activity, Signal, Database } from 'lucide-react';
 
@@ -21,12 +23,23 @@ export default function LiveStatsCards() {
     equity,
     connectedBroker,
   } = useAutoTradingStore();
+  
+  const { wsConnected } = useWebSocket();
 
   const [isClient, setIsClient] = useState(false);
-  const { stats: persistentStats } = useStatistics({ refreshInterval: 30000 });
+  const [mounted, setMounted] = useState(false);
+  
+  // Fetch statistics for all brokers, including Deriv
+  // Only enable after component is mounted to prevent SSR issues
+  const { stats: persistentStats } = useStatistics({ 
+    broker: null, // null = all brokers including Deriv
+    refreshInterval: 30000,
+    enabled: mounted
+  });
 
   useEffect(() => {
     setIsClient(true);
+    setMounted(true);
   }, []);
 
   if (!isClient) {
@@ -75,16 +88,24 @@ export default function LiveStatsCards() {
             <span className="text-sm text-gray-400">Total Trades</span>
             <div className="flex items-center gap-2">
               <Activity className="h-5 w-5 text-blue-400" />
+              {connectedBroker === 'deriv' && (
+                <Badge variant="outline" className="text-xs border-purple-500 text-purple-400">
+                  DERIV
+                </Badge>
+              )}
               {persistentStats && (
                 <span title="Persistent data">
                   <Database className="h-3 w-3 text-green-400" />
                 </span>
               )}
+              {wsConnected && connectedBroker && (
+                <span className="h-2 w-2 bg-green-400 rounded-full animate-pulse" title="Live connection" />
+              )}
             </div>
           </div>
           <div className="text-2xl font-bold text-gray-100">{totalTrades}</div>
           <div className="text-xs text-gray-500 mt-1">
-            {activeTrades} open {connectedBroker && `• Live from ${connectedBroker.toUpperCase()}`}
+            {activeTrades} open {connectedBroker && `• Live from ${connectedBroker.toUpperCase()}${connectedBroker === 'deriv' ? ' (Real-time)' : ''}`}
           </div>
           <Link href="/autotrade">
             <Button variant="ghost" size="sm" className="mt-2 text-xs text-gray-400 hover:text-gray-300">

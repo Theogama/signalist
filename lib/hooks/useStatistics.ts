@@ -66,107 +66,159 @@ export function useStatistics(options: UseStatisticsOptions = {}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const mountedRef = useRef(true);
 
   const cacheKey = broker ? `stats-${broker}` : 'stats-all';
 
-  const fetchStats = async (): Promise<TradingStatistics | null> => {
-    // Check cache first
-    const cached = statisticsCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      return cached.data;
-    }
-
-    // If there's already a pending request, wait for it
-    if (cached?.promise) {
-      return cached.promise;
-    }
-
-    // Create new request
-    const promise = (async () => {
-      try {
-        const url = broker 
-          ? `/api/auto-trading/statistics?broker=${broker}`
-          : '/api/auto-trading/statistics';
-        
-        const response = await fetch(url);
-        const result = await response.json();
-
-        if (result.success) {
-          const data = result.data;
-          statisticsCache.set(cacheKey, {
-            data,
-            timestamp: Date.now(),
-            promise: null,
-          });
-          return data;
-        } else {
-          throw new Error(result.error || 'Failed to fetch statistics');
-        }
-      } catch (err: any) {
-        statisticsCache.set(cacheKey, {
-          data: null,
-          timestamp: Date.now(),
-          promise: null,
-        });
-        throw err;
-      }
-    })();
-
-    // Store promise in cache
-    statisticsCache.set(cacheKey, {
-      data: cached?.data || null,
-      timestamp: cached?.timestamp || 0,
-      promise,
-    });
-
-    return promise;
-  };
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!enabled) {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
       return;
     }
 
-    let mounted = true;
+    const fetchStats = async (): Promise<TradingStatistics | null> => {
+      // Check cache first
+      const cached = statisticsCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        return cached.data;
+      }
+
+      // If there's already a pending request, wait for it
+      if (cached?.promise) {
+        return cached.promise;
+      }
+
+      // Create new request
+      const promise = (async () => {
+        try {
+          const url = broker 
+            ? `/api/auto-trading/statistics?broker=${broker}`
+            : '/api/auto-trading/statistics';
+          
+          const response = await fetch(url);
+          const result = await response.json();
+
+          if (result.success) {
+            const data = result.data;
+            statisticsCache.set(cacheKey, {
+              data,
+              timestamp: Date.now(),
+              promise: null,
+            });
+            return data;
+          } else {
+            throw new Error(result.error || 'Failed to fetch statistics');
+          }
+        } catch (err: any) {
+          statisticsCache.set(cacheKey, {
+            data: null,
+            timestamp: Date.now(),
+            promise: null,
+          });
+          throw err;
+        }
+      })();
+
+      // Store promise in cache
+      statisticsCache.set(cacheKey, {
+        data: cached?.data || null,
+        timestamp: cached?.timestamp || 0,
+        promise,
+      });
+
+      return promise;
+    };
 
     const loadStats = async () => {
+      if (!mountedRef.current) return;
+      
       try {
-        setLoading(true);
-        setError(null);
+        if (mountedRef.current) {
+          setLoading(true);
+          setError(null);
+        }
         const data = await fetchStats();
-        if (mounted) {
+        if (mountedRef.current) {
           setStats(data);
         }
       } catch (err: any) {
-        if (mounted) {
+        if (mountedRef.current) {
           setError(err.message || 'Failed to fetch statistics');
         }
       } finally {
-        if (mounted) {
+        if (mountedRef.current) {
           setLoading(false);
         }
       }
     };
 
-    // Initial load
-    loadStats();
+    // Initial load - use setTimeout to ensure component is mounted
+    const timeoutId = setTimeout(() => {
+      if (mountedRef.current) {
+        loadStats();
+      }
+    }, 0);
 
     // Set up polling if refreshInterval > 0
     if (refreshInterval > 0) {
-      intervalRef.current = setInterval(loadStats, refreshInterval);
+      intervalRef.current = setInterval(() => {
+        if (mountedRef.current) {
+          loadStats();
+        }
+      }, refreshInterval);
     }
 
     return () => {
-      mounted = false;
+      clearTimeout(timeoutId);
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+        intervalRef.current = null;
       }
     };
-  }, [broker, refreshInterval, enabled]);
+  }, [broker, refreshInterval, enabled, cacheKey]);
 
-  return { stats, loading, error, refetch: fetchStats };
+  const refetch = async () => {
+    const cacheKey = broker ? `stats-${broker}` : 'stats-all';
+    const cached = statisticsCache.get(cacheKey);
+    if (cached?.promise) {
+      return cached.promise;
+    }
+    
+    const url = broker 
+      ? `/api/auto-trading/statistics?broker=${broker}`
+      : '/api/auto-trading/statistics';
+    
+    const response = await fetch(url);
+    const result = await response.json();
+    
+    if (result.success) {
+      const data = result.data;
+      statisticsCache.set(cacheKey, {
+        data,
+        timestamp: Date.now(),
+        promise: null,
+      });
+      if (mountedRef.current) {
+        setStats(data);
+      }
+      return data;
+    }
+    throw new Error(result.error || 'Failed to fetch statistics');
+  };
+
+  return { stats, loading, error, refetch };
 }
+
+
 
 
 

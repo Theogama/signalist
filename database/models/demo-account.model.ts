@@ -23,7 +23,7 @@ export interface DemoAccountDoc extends Document {
 
 const DemoAccountSchema = new Schema<DemoAccountDoc>(
   {
-    userId: { type: String, required: true, index: true },
+    userId: { type: String, required: true },
     broker: { 
       type: String, 
       enum: ['exness', 'deriv', 'demo'], 

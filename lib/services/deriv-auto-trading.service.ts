@@ -11,6 +11,7 @@ import { SignalistBotTrade } from '@/database/models/signalist-bot-trade.model';
 import { AutoTradingSession } from '@/database/models/auto-trading-session.model';
 import { decrypt } from '@/lib/utils/encryption';
 import { DerivServerWebSocketClient, DerivBuyRequest, DerivContract } from '@/lib/deriv/server-websocket-client';
+import { riskManagementService } from '@/lib/services/risk-management.service';
 import { randomUUID } from 'crypto';
 
 export interface AutoTradingConfig {
@@ -111,21 +112,41 @@ export class DerivAutoTradingService extends EventEmitter {
       await this.subscribeToContract(contract.contract_id);
     }
 
-    // Create session record
+    // Get Deriv token ID for reference
+    const tokenDoc = await DerivApiToken.findOne({ userId: config.userId });
+    
+    // Create session record with enhanced fields
     const session = new AutoTradingSession({
       sessionId: randomUUID(),
       userId: config.userId,
+      derivTokenId: tokenDoc?._id.toString(),
       broker: 'deriv',
       strategy: config.strategy,
-      status: 'active',
+      status: 'starting',
       startedAt: new Date(),
       totalTrades: 0,
+      winningTrades: 0,
+      losingTrades: 0,
       totalProfitLoss: 0,
+      currentDrawdown: 0,
+      maxDrawdown: 0,
+      dailyTradeCount: 0,
+      dailyProfitLoss: 0,
+      consecutiveLosses: 0,
       startBalance: this.sessionStartBalance,
-      riskSettings: config.riskSettings,
+      currentBalance: this.sessionStartBalance,
+      riskSettings: {
+        ...config.riskSettings,
+        riskPerTrade: config.riskSettings.riskPerTrade || 1,
+      },
+      signalFilters: config.signalFilters || {},
     });
     await session.save();
     this.sessionId = session.sessionId;
+    
+    // Update status to active after initialization
+    session.status = 'active';
+    await session.save();
 
     this.isRunning = true;
     this.emit('started', { sessionId: this.sessionId, balance: this.sessionStartBalance });
@@ -243,38 +264,38 @@ export class DerivAutoTradingService extends EventEmitter {
    * Check if we should execute a trade for a signal
    */
   private async shouldExecuteTrade(signal: any): Promise<boolean> {
-    if (!this.config || !this.wsClient) {
+    if (!this.config || !this.wsClient || !this.sessionId) {
       return false;
     }
 
-    // Check daily trade limit
-    const today = new Date().toISOString().split('T')[0];
-    if (this.lastTradeDate !== today) {
-      this.lastTradeDate = today;
-      this.dailyTradeCount = 0;
-      this.dailyProfitLoss = 0;
-    }
-
-    if (this.config.riskSettings.maxTradesPerDay > 0 && 
-        this.dailyTradeCount >= this.config.riskSettings.maxTradesPerDay) {
+    // Get current balance
+    const accountInfo = await this.wsClient.getAccountInfo().catch(() => null);
+    if (!accountInfo) {
       return false;
     }
+    const currentBalance = accountInfo.balance;
 
-    // Check daily loss limit
-    if (this.config.riskSettings.dailyLossLimit > 0 && 
-        this.dailyProfitLoss <= -this.config.riskSettings.dailyLossLimit) {
-      return false;
-    }
+    // Use Risk Management Service for comprehensive validation
+    const riskCheck = await riskManagementService.canExecuteTrade(
+      this.sessionId,
+      signal,
+      currentBalance
+    );
 
-    // Check drawdown
-    if (this.config.riskSettings.autoStopDrawdown) {
-      const currentBalance = await this.wsClient.getAccountInfo().then(a => a.balance).catch(() => this.sessionStartBalance);
-      const drawdown = ((this.sessionStartBalance - currentBalance) / this.sessionStartBalance) * 100;
-      if (drawdown >= this.config.riskSettings.autoStopDrawdown) {
-        this.emit('drawdown_limit', { drawdown });
-        await this.stop();
-        return false;
+    if (!riskCheck.allowed) {
+      if (riskCheck.reason) {
+        console.log(`[AutoTrading] Trade rejected: ${riskCheck.reason}`);
+        this.emit('risk_limit_reached', {
+          reason: riskCheck.reason,
+          metrics: riskCheck.metrics,
+        });
+
+        // If drawdown limit reached, stop trading
+        if (riskCheck.reason.includes('Drawdown limit')) {
+          await this.stop();
+        }
       }
+      return false;
     }
 
     // Check if we already have an open trade for this symbol
@@ -301,13 +322,12 @@ export class DerivAutoTradingService extends EventEmitter {
       const accountInfo = await this.wsClient.getAccountInfo();
       const balance = accountInfo.balance;
 
-      // Calculate stake size
-      const riskAmount = (balance * this.config.riskSettings.riskPerTrade) / 100;
-      const stake = Math.min(
-        riskAmount,
-        this.config.riskSettings.maxStakeSize > 0 
-          ? this.config.riskSettings.maxStakeSize 
-          : balance * 0.1 // Default 10% max
+      // Calculate stake size using Risk Management Service
+      const stake = riskManagementService.calculateStakeSize(
+        balance,
+        this.config.riskSettings,
+        signal.entryPrice,
+        signal.stopLoss
       );
 
       if (stake < 1) {
@@ -334,7 +354,7 @@ export class DerivAutoTradingService extends EventEmitter {
         };
       }
 
-      const contractId = buyResponse.buy.contract_id;
+      const contractId = buyResponse.buy.contract_id?.toString() || buyResponse.buy.contract_id;
       const purchasePrice = buyResponse.buy.purchase_price;
 
       // Subscribe to contract updates
@@ -538,4 +558,5 @@ export function stopAutoTradingService(userId: string): void {
     serviceInstances.delete(userId);
   }
 }
+
 

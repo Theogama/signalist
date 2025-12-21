@@ -187,15 +187,19 @@ function formatTrade(trade: any) {
     side: trade.side,
     entryPrice: trade.entryPrice,
     exitPrice: trade.exitPrice || trade.entryPrice,
-    quantity: trade.lotOrStake,
+    quantity: trade.lotOrStake || trade.quantity || 0,
     profitLoss: trade.realizedPnl || trade.unrealizedPnl || 0,
     status: trade.status === 'OPEN' ? 'OPEN' as const :
             trade.status === 'TP_HIT' ? 'CLOSED' as const :
             trade.status === 'SL_HIT' ? 'STOPPED' as const :
             'CLOSED' as const,
-    openedAt: trade.entryTimestamp,
-    closedAt: trade.exitTimestamp || trade.updatedAt,
+    openedAt: trade.entryTimestamp || trade.openedAt,
+    closedAt: trade.exitTimestamp || trade.closedAt || trade.updatedAt,
     brokerTradeId: trade.brokerTradeId,
+    // Include additional Deriv-specific fields
+    currentPrice: trade.exitPrice || trade.entryPrice,
+    unrealizedPnl: trade.unrealizedPnl,
+    realizedPnl: trade.realizedPnl,
   };
 }
 

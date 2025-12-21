@@ -9,6 +9,7 @@ import { headers } from 'next/headers';
 import { sessionManager } from '@/lib/auto-trading/session-manager/SessionManager';
 import { botManager } from '@/lib/services/bot-manager.service';
 import { SignalistBotTrade } from '@/database/models/signalist-bot-trade.model';
+import { DemoAccount } from '@/database/models/demo-account.model';
 import { connectToDatabase } from '@/database/mongoose';
 
 export async function GET(request: NextRequest) {
@@ -32,16 +33,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get adapter and calculate P/L
-    const adapter = sessionManager.getUserAdapter(userId, broker);
-    if (!adapter) {
-      return NextResponse.json(
-        { success: false, error: 'Broker not connected' },
-        { status: 400 }
-      );
-    }
-
     await connectToDatabase();
+
+    // Get adapter (optional - not required for Deriv)
+    const adapter = sessionManager.getUserAdapter(userId, broker);
 
     // Get active bots for this user
     const activeBots = botManager.getUserBots(userId);
@@ -77,13 +72,48 @@ export async function GET(request: NextRequest) {
         }, 0);
       } catch (error) {
         console.error('Error getting balance from adapter:', error);
-        // Use default balance
+        // Fall through to database fallback
+      }
+    }
+
+    // Fallback to database for Deriv or if no adapter/paper trader
+    if (!balance) {
+      // Try to get balance from DemoAccount
+      const account = await DemoAccount.findOne({ userId, broker });
+      if (account) {
+        balance = {
+          balance: account.balance,
+          equity: account.equity,
+          margin: account.margin,
+          freeMargin: account.freeMargin,
+          currency: account.currency || 'USD',
+        };
+      } else {
+        // Default balance if no account found
         balance = {
           balance: 10000,
           equity: 10000,
           margin: 0,
           freeMargin: 10000,
+          currency: 'USD',
         };
+      }
+
+      // Calculate running P/L from open trades in database
+      const openTrades = await SignalistBotTrade.find({
+        userId,
+        broker,
+        status: 'OPEN'
+      }).lean();
+
+      openPositionsCount = openTrades.length;
+      currentRunningPL = openTrades.reduce((sum, trade) => {
+        return sum + (trade.unrealizedPnl || 0);
+      }, 0);
+
+      // Update equity based on unrealized P/L
+      if (balance) {
+        balance.equity = balance.balance + currentRunningPL;
       }
     }
 

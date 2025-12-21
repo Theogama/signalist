@@ -12,10 +12,15 @@ export const dynamic = 'force-dynamic';
 export default async function SignalsPage({
   searchParams,
 }: {
-  searchParams: { status?: string; action?: string; source?: string; search?: string };
+  searchParams: Promise<{ status?: string; action?: string; source?: string; search?: string }> | { status?: string; action?: string; source?: string; search?: string };
 }) {
   const session = await auth.api.getSession({ headers: await headers() });
   const userId = session?.user?.id;
+  
+  // Resolve searchParams if it's a Promise (Next.js 15+)
+  const resolvedSearchParams = searchParams instanceof Promise 
+    ? await searchParams 
+    : searchParams;
   
   // Check if user has active auto-trading bots using the new system
   let hasActiveBot = false;
@@ -28,25 +33,29 @@ export default async function SignalsPage({
     }
   }
 
+  // Validate and sanitize action parameter
+  const actionParam = resolvedSearchParams.action;
+  const validAction = actionParam === 'BUY' || actionParam === 'SELL' ? actionParam : undefined;
+
   const signalsResult = await getSignals({
-    status: (searchParams.status as any) || 'active',
-    action: searchParams.action as 'BUY' | 'SELL' | undefined,
+    status: resolvedSearchParams.status || 'active',
+    action: validAction,
     limit: 100,
   });
   
   let signals = signalsResult.success && 'data' in signalsResult ? signalsResult.data || [] : [];
   
   // Client-side filtering for search and source (since they're not in the API yet)
-  if (searchParams.search) {
-    const searchLower = searchParams.search.toLowerCase();
+  if (resolvedSearchParams.search) {
+    const searchLower = resolvedSearchParams.search.toLowerCase();
     signals = signals.filter((s: any) => 
-      s.symbol.toLowerCase().includes(searchLower) || 
-      s.ticker.toLowerCase().includes(searchLower)
+      s.symbol?.toLowerCase().includes(searchLower) || 
+      s.ticker?.toLowerCase().includes(searchLower)
     );
   }
   
-  if (searchParams.source && searchParams.source !== 'all') {
-    signals = signals.filter((s: any) => s.source === searchParams.source);
+  if (resolvedSearchParams.source && resolvedSearchParams.source !== 'all') {
+    signals = signals.filter((s: any) => s.source === resolvedSearchParams.source);
   }
 
   return (

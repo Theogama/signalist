@@ -145,13 +145,38 @@ export class SignalistBotManager extends EventEmitter {
       });
       return adapter;
     } else {
+      // For Deriv, try to get token from settings first, then from DerivApiToken model as fallback
+      let derivToken = settings.derivToken;
+      
+      // If no token in settings, try to get from DerivApiToken model
+      if (!derivToken) {
+        try {
+          const { connectToDatabase } = await import('@/database/mongoose');
+          const { DerivApiToken } = await import('@/database/models/deriv-api-token.model');
+          const { decrypt } = await import('@/lib/utils/encryption');
+          
+          await connectToDatabase();
+          const tokenDoc = await DerivApiToken.findOne({ 
+            userId: settings.userId,
+            isValid: true 
+          });
+          
+          if (tokenDoc) {
+            derivToken = await decrypt(tokenDoc.token);
+            console.log('[BotManager] Using Deriv token from DerivApiToken model');
+          }
+        } catch (error) {
+          console.error('[BotManager] Error fetching Deriv token from DerivApiToken:', error);
+        }
+      }
+      
       const adapter = new DerivAdapter();
       await adapter.initialize({
         broker: 'deriv',
-        derivToken: settings.derivToken,
+        derivToken: derivToken || '', // Allow empty for demo mode
         derivAppId: process.env.DERIV_APP_ID || '113058',
-        paperTrading: false,
-        environment: 'live',
+        paperTrading: !derivToken, // Use paper trading if no token
+        environment: derivToken ? 'live' : 'demo',
       });
       return adapter;
     }
@@ -168,6 +193,8 @@ export class SignalistBotManager extends EventEmitter {
 
 // Singleton instance
 export const botManager = new SignalistBotManager();
+
+
 
 
 

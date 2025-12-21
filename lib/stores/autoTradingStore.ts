@@ -436,32 +436,46 @@ export const useAutoTradingStore = create<AutoTradingState>()(
         });
 
         try {
-          // Use new unified start API endpoint
-          const response = await fetch('/api/auto-trading/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              botId: selectedBot.id,
-              botName: selectedBot.name, // Include bot name for strategy mapping
-              instrument: selectedInstrument.symbol,
-              settings: botParams, // Use 'settings' instead of 'parameters'
-              broker: connectedBroker,
-            }),
-          });
+          // Use new unified start API endpoint with timeout to prevent hanging
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+          
+          try {
+            const response = await fetch('/api/auto-trading/start', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                botId: selectedBot.id,
+                botName: selectedBot.name, // Include bot name for strategy mapping
+                instrument: selectedInstrument.symbol,
+                settings: botParams, // Use 'settings' instead of 'parameters'
+                broker: connectedBroker,
+              }),
+              signal: controller.signal,
+            });
 
-          if (!response.ok) {
-            const text = await response.text().catch(() => '');
-            throw new Error(`Request failed: ${response.status} ${text.substring(0, 200)}`);
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+              const text = await response.text().catch(() => '');
+              throw new Error(`Request failed: ${response.status} ${text.substring(0, 200)}`);
+            }
+
+            const data = await safeJsonParse<ApiResponse>(response);
+
+            if (!data.success) {
+              throw new Error(data.error || 'Failed to start auto-trade');
+            }
+
+            // WebSocket connection is handled by useWebSocket hook
+            // No need to call connectWebSocket here
+          } catch (fetchError: any) {
+            clearTimeout(timeoutId);
+            if (fetchError.name === 'AbortError') {
+              throw new Error('Request timed out. The bot may still be starting. Please wait a moment and check the status.');
+            }
+            throw fetchError;
           }
-
-          const data = await safeJsonParse<ApiResponse>(response);
-
-          if (!data.success) {
-            throw new Error(data.error || 'Failed to start auto-trade');
-          }
-
-          // WebSocket connection is handled by useWebSocket hook
-          // No need to call connectWebSocket here
         } catch (error: any) {
           set({
             botStatus: 'error',

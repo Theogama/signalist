@@ -18,7 +18,6 @@ import {
   AlertCircle,
   Play,
   Square,
-  Settings,
   X,
   CheckCircle2
 } from 'lucide-react';
@@ -29,7 +28,6 @@ import AutoTradeSettingsPanel from './AutoTradeSettingsPanel';
 import StartStopControls from './StartStopControls';
 import StrategyPreviewChart from './StrategyPreviewChart';
 import LiveLogsPanel from './LiveLogsPanel';
-import TradesTable from './TradesTable';
 import BotBuilderUI from './BotBuilderUI';
 import AutomationPanel from './AutomationPanel';
 import PLTracker from './PLTracker';
@@ -37,11 +35,11 @@ import LiveTradeUpdates from './LiveTradeUpdates';
 import OpenTrades from './OpenTrades';
 import ClosedTrades from './ClosedTrades';
 import BotDiagnosticsPanel from './BotDiagnosticsPanel';
-import DerivTradeExecutor from './DerivTradeExecutor';
+import UniversalMetricsPanel from './UniversalMetricsPanel';
+import MarketAvailabilityAlert from './MarketAvailabilityAlert';
 import { useWebSocket } from '@/lib/hooks/useWebSocket';
 import { useStateRestoration } from '@/lib/hooks/useStateRestoration';
 import { useTradeAlerts } from '@/lib/hooks/useTradeAlerts';
-import { useAutoTradingStore as useStore } from '@/lib/stores/autoTradingStore';
 import { toast } from 'sonner';
 
 export default function AutoTradingDashboard() {
@@ -203,18 +201,37 @@ export default function AutoTradingDashboard() {
           <div>
             <h1 className="text-3xl font-bold text-gray-100 mb-2">Auto-Trading Dashboard</h1>
             <div className="text-gray-400 flex items-center gap-2 flex-wrap">
-              <span>Automated trading with Exness and Deriv brokers</span>
+              <span>
+                {connectedBroker === 'deriv' 
+                  ? 'Automated trading with Deriv (API-enabled)' 
+                  : connectedBroker === 'exness'
+                  ? 'Trading signals and analytics for Exness (Manual trading via MT5)'
+                  : 'Connect a broker to start trading'}
+              </span>
               {connectedBroker === 'deriv' && (
-                <Badge variant="outline" className="border-blue-500 text-blue-400">
-                  DERIV DATA ACTIVE
+                <Badge variant="outline" className="border-purple-500 text-purple-400">
+                  <Activity className="h-3 w-3 mr-1" />
+                  DERIV API CONNECTED
+                </Badge>
+              )}
+              {connectedBroker === 'exness' && (
+                <Badge variant="outline" className="border-yellow-500 text-yellow-400">
+                  <Lock className="h-3 w-3 mr-1" />
+                  EXNESS - EXTERNAL MT5
                 </Badge>
               )}
             </div>
           </div>
           {connectedBroker === 'deriv' && (
-            <div className="flex items-center gap-2 text-sm text-blue-400">
+            <div className="flex items-center gap-2 text-sm text-purple-400">
               <Activity className="h-4 w-4 animate-pulse" />
-              <span>Deriv Trading Active</span>
+              <span>Deriv API - Auto-Trading Enabled</span>
+            </div>
+          )}
+          {connectedBroker === 'exness' && (
+            <div className="flex items-center gap-2 text-sm text-yellow-400">
+              <Lock className="h-4 w-4" />
+              <span>Exness - Signals & Analytics Only</span>
             </div>
           )}
         </div>
@@ -229,7 +246,7 @@ export default function AutoTradingDashboard() {
               No Broker Connected
             </CardTitle>
             <CardDescription className="text-gray-400">
-              Quick connect to Exness or Deriv in Demo Mode - No API keys required!
+              Connect to Deriv for automated trading, or Exness for signals and analytics
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -237,6 +254,9 @@ export default function AutoTradingDashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* Market Availability Alert */}
+      {connectedBroker && <MarketAvailabilityAlert />}
 
       {/* Broker Connection Status with Disconnect Toggle */}
       {connectedBroker && (
@@ -249,7 +269,11 @@ export default function AutoTradingDashboard() {
                   Connected to {connectedBroker.toUpperCase()}
                 </CardTitle>
                 <CardDescription className="text-gray-400 text-xs">
-                  You're trading with virtual funds. All instruments are automatically available. Perfect for testing strategies!
+                  {connectedBroker === 'deriv' 
+                    ? 'Connected to Deriv API. Auto-trading is enabled with your configured settings.'
+                    : connectedBroker === 'exness'
+                    ? 'Connected to Exness. Trading signals and analytics available. Manual trading via MT5 platform.'
+                    : 'Broker connected'}
                 </CardDescription>
               </div>
               <Button
@@ -412,6 +436,9 @@ export default function AutoTradingDashboard() {
           {/* Bot Diagnostics */}
           <BotDiagnosticsPanel />
 
+          {/* Universal Metrics */}
+          <UniversalMetricsPanel />
+
           {/* P/L Tracker */}
           <PLTracker />
 
@@ -440,10 +467,6 @@ export default function AutoTradingDashboard() {
             </CardContent>
           </Card>
 
-          {/* Deriv Trade Executor - Show when Deriv is connected */}
-          {connectedBroker === 'deriv' && (
-            <DerivTradeExecutor />
-          )}
         </div>
       </div>
 

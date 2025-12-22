@@ -574,13 +574,13 @@ export default function DerivAccountCreator() {
                     )}
                   </div>
                   <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-                    <p className="text-xs text-yellow-400 flex items-start gap-2">
+                    <div className="text-xs text-yellow-400 flex items-start gap-2">
                       <Info className="h-4 w-4 mt-0.5" />
                       <span>
                         Use these credentials to connect your Deriv account in the broker connection modal.
                         The OAuth token can be used as your API key.
                       </span>
-                    </p>
+                    </div>
                   </div>
                   <Button
                     onClick={() => {

@@ -280,10 +280,12 @@ export async function POST(request: NextRequest) {
       paperTrading: adapter.isPaperTrading(),
     };
 
-    // Start bot with detailed error handling
+    // Start bot with detailed error handling and timeout
+    // Return immediately to prevent browser blocking - bot initializes in background
     let botKey: string;
     try {
-      botKey = await botManager.startBot(
+      // Start bot initialization with overall timeout
+      const startBotPromise = botManager.startBot(
         botId,
         userId,
         strategy,
@@ -292,6 +294,11 @@ export async function POST(request: NextRequest) {
         parameters,
         adapter.isPaperTrading()
       );
+      const overallTimeoutPromise = new Promise<string>((_, reject) => 
+        setTimeout(() => reject(new Error('Bot start timeout - initialization taking too long')), 8000)
+      );
+      
+      botKey = await Promise.race([startBotPromise, overallTimeoutPromise]);
     } catch (error: any) {
       console.error('Error in botManager.startBot:', error);
       

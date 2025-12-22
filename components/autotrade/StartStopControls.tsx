@@ -8,8 +8,9 @@
 import { useState, useEffect } from 'react';
 import { useAutoTradingStore } from '@/lib/stores/autoTradingStore';
 import { Button } from '@/components/ui/button';
-import { Play, Square, Loader2, AlertCircle, Activity } from 'lucide-react';
+import { Play, Square, Loader2, AlertCircle, Activity, Lock } from 'lucide-react';
 import { toast } from 'sonner';
+import MarketAvailabilityAlert from './MarketAvailabilityAlert';
 
 export default function StartStopControls() {
   const {
@@ -26,11 +27,63 @@ export default function StartStopControls() {
 
   const isRunning = botStatus === 'running';
   const isStopping = botStatus === 'stopping';
-  const canStart = connectedBroker && selectedInstrument && selectedBot && botParams && !isRunning;
+  const [marketOpen, setMarketOpen] = useState(true);
+  
+  // Check market status
+  useEffect(() => {
+    if (!connectedBroker) {
+      setMarketOpen(true);
+      return;
+    }
+
+    const checkMarket = async () => {
+      try {
+        if (connectedBroker === 'deriv') {
+          const response = await fetch('/api/deriv/market-status');
+          if (response.ok) {
+            const data = await response.json();
+            setMarketOpen(data.isOpen !== false);
+          }
+        } else if (connectedBroker === 'exness') {
+          // Exness: time-based check (no API)
+          const now = new Date();
+          const day = now.getDay();
+          const hour = now.getHours();
+          const minute = now.getMinutes();
+          const currentTime = hour * 60 + minute;
+          const isWeekend = day === 0 || day === 6;
+          const isMarketHours = !isWeekend && (
+            (currentTime >= 0 && currentTime < 22 * 60) || 
+            (day === 5 && currentTime < 22 * 60)
+          );
+          setMarketOpen(isMarketHours);
+        }
+      } catch (error) {
+        console.error('Error checking market status:', error);
+        setMarketOpen(true); // Default to open on error
+      }
+    };
+
+    checkMarket();
+    const interval = setInterval(checkMarket, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [connectedBroker]);
+
+  const canStart = connectedBroker && selectedInstrument && selectedBot && botParams && !isRunning && marketOpen && connectedBroker !== 'exness';
 
   const handleStart = async () => {
-    if (!canStart) {
+    if (!connectedBroker || !selectedInstrument || !selectedBot || !botParams) {
       toast.error('Please connect broker, select instrument, and configure bot');
+      return;
+    }
+
+    if (connectedBroker === 'exness') {
+      toast.error('Auto-trading is not available for Exness. Please use Exness MT5 platform for manual trading.');
+      return;
+    }
+
+    if (!marketOpen) {
+      toast.error('Markets are currently closed. Please wait for markets to open.');
       return;
     }
 
@@ -146,12 +199,28 @@ export default function StartStopControls() {
         </div>
       )}
 
+      {connectedBroker === 'exness' && (
+        <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+          <Lock className="h-4 w-4 text-red-400" />
+          <span className="text-sm text-red-400">
+            Auto-trading not available for Exness. Use MT5 platform for manual trading.
+          </span>
+        </div>
+      )}
+
+      {connectedBroker && !marketOpen && (
+        <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+          <AlertCircle className="h-4 w-4 text-red-400" />
+          <span className="text-sm text-red-400">Markets are currently closed. Bot cannot start.</span>
+        </div>
+      )}
+
       {/* Control Buttons */}
       <div className="flex gap-2">
         {!isRunning ? (
           <Button
             onClick={handleStart}
-            disabled={!canStart || isStopping}
+            disabled={!canStart || isStopping || connectedBroker === 'exness' || !marketOpen}
             className="flex-1"
             size="lg"
           >

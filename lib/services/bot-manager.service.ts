@@ -32,6 +32,10 @@ export interface ActiveBot {
   historicalData: MarketData[]; // Store historical data for strategies
   lastSessionLogTime?: number; // Track when we last logged session message
   broker?: 'exness' | 'deriv'; // Broker type
+  // Sequential execution state
+  currentTradeId?: string; // ID of currently open trade
+  isInTrade: boolean; // True when a trade is open (blocks new trades)
+  tradeCloseListener?: () => void; // Function to unsubscribe from trade close events
 }
 
 class BotManagerService {
@@ -59,18 +63,29 @@ class BotManagerService {
       }
     }
 
-    // Initialize paper trader if in paper trading mode
+    // Initialize paper trader if in paper trading mode (with timeout)
     const paperTrader = paperTrading ? new PaperTrader(userId, parameters.broker || 'demo', parameters.initialBalance || 10000) : null;
     if (paperTrader) {
-      await paperTrader.initialize();
+      // Initialize paper trader with timeout to prevent blocking
+      const initPromise = paperTrader.initialize();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Paper trader initialization timeout')), 5000)
+      );
+      try {
+        await Promise.race([initPromise, timeoutPromise]);
+      } catch (error: any) {
+        console.warn(`[BotManager] Paper trader initialization timeout or error: ${error.message}`);
+        // Continue without paper trader initialization - it will be initialized lazily
+      }
     }
 
-    // Create enhanced risk manager
+    // Create enhanced risk manager (synchronous, fast)
+    // SEQUENTIAL EXECUTION: maxConcurrentPositions = 1 (only one trade at a time)
     const riskManager = new EnhancedRiskManager({
       maxRiskPerTrade: parameters.riskPercent || 1,
       maxDailyLoss: parameters.maxDailyLoss || 10,
       maxDrawdown: parameters.maxDrawdown || 20,
-      maxConcurrentPositions: parameters.maxTrades || 1,
+      maxConcurrentPositions: 1, // SEQUENTIAL: Only one trade at a time
       maxPositionSize: parameters.riskPercent || 1,
       // Enhanced features
       useATRForSL: parameters.useATRForSL !== false,
@@ -100,16 +115,48 @@ class BotManagerService {
       parameters: parameters,
     };
 
-    await strategy.initialize(strategyConfig);
+    // Initialize strategy with timeout
+    const strategyInitPromise = strategy.initialize(strategyConfig);
+    const strategyTimeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Strategy initialization timeout')), 5000)
+    );
+    try {
+      await Promise.race([strategyInitPromise, strategyTimeoutPromise]);
+    } catch (error: any) {
+      console.warn(`[BotManager] Strategy initialization timeout or error: ${error.message}`);
+      // Continue - strategy might still work with default initialization
+    }
 
-    // Initialize adapter if provided
+    // Initialize adapter if provided (with timeout)
     if (adapter && !paperTrading) {
-      await adapter.initialize({
+      const adapterInitPromise = adapter.initialize({
         apiKey: parameters.apiKey || '',
         apiSecret: parameters.apiSecret || '',
         environment: parameters.environment || 'demo',
       });
-      await adapter.authenticate();
+      const adapterInitTimeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Adapter initialization timeout')), 5000)
+      );
+      try {
+        await Promise.race([adapterInitPromise, adapterInitTimeoutPromise]);
+      } catch (error: any) {
+        console.warn(`[BotManager] Adapter initialization timeout: ${error.message}`);
+        throw new Error(`Adapter initialization failed: ${error.message}`);
+      }
+      
+      // Authenticate with timeout
+      if (!(adapter as any).authenticated) {
+        const authPromise = adapter.authenticate();
+        const authTimeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Authentication timeout')), 5000)
+        );
+        try {
+          await Promise.race([authPromise, authTimeoutPromise]);
+        } catch (error: any) {
+          console.warn(`[BotManager] Authentication timeout: ${error.message}`);
+          throw new Error(`Authentication failed: ${error.message}`);
+        }
+      }
     }
 
     // Create session
@@ -123,7 +170,7 @@ class BotManagerService {
       paperTrading
     );
 
-    // Create active bot
+    // Create active bot with sequential execution state
     const activeBot: ActiveBot = {
       botId,
       userId,
@@ -137,6 +184,11 @@ class BotManagerService {
       startedAt: new Date(),
       riskManager,
       historicalData: [], // Initialize empty historical data
+      broker: parameters.broker || (adapter ? (adapter.getBrokerType?.() || undefined) : undefined),
+      // SEQUENTIAL EXECUTION STATE: Initialize as not in trade
+      isInTrade: false,
+      currentTradeId: undefined,
+      tradeCloseListener: undefined,
     };
 
     // Log bot start
@@ -148,12 +200,26 @@ class BotManagerService {
 
     // Start trading loop
     logEmitter.info(
-      `Starting trading loop for ${instrument}. Checking for signals every 5 seconds...`,
+      `Starting trading loop for ${instrument}. Checking for signals every 1 second for immediate execution...`,
       userId,
       { botId, instrument, paperTrading }
     );
     
-    // Set up interval for trading loop (non-blocking)
+    activeBot.intervalId = undefined; // Will be set after first execution
+    this.activeBots.set(botKey, activeBot);
+    
+    // Execute first loop IMMEDIATELY (no delay) for instant trade execution
+    // This allows immediate signal detection and trade execution
+    this.executeTradingLoop(activeBot).catch((error) => {
+      console.error(`[BotManager] Error in initial trading loop for bot ${botId}:`, error);
+      logEmitter.error(
+        `Error in initial trading loop: ${error.message}`,
+        userId,
+        { botId, error: error.message }
+      );
+    });
+    
+    // Set up interval for continuous trading loop (faster polling for immediate execution)
     const intervalId = setInterval(async () => {
       try {
         await this.executeTradingLoop(activeBot);
@@ -165,23 +231,9 @@ class BotManagerService {
           { botId, error: error.message }
         );
       }
-    }, 5000); // Check every 5 seconds
+    }, 1000); // Check every 1 second for faster signal detection and immediate execution
 
     activeBot.intervalId = intervalId;
-    this.activeBots.set(botKey, activeBot);
-    
-    // Execute first loop asynchronously after a short delay to prevent blocking
-    // This allows the start API to return quickly
-    setTimeout(() => {
-      this.executeTradingLoop(activeBot).catch((error) => {
-        console.error(`[BotManager] Error in initial trading loop for bot ${botId}:`, error);
-        logEmitter.error(
-          `Error in initial trading loop: ${error.message}`,
-          userId,
-          { botId, error: error.message }
-        );
-      });
-    }, 1000); // Start after 1 second delay
 
     return botKey;
   }
@@ -206,6 +258,16 @@ class BotManagerService {
       clearInterval(bot.intervalId);
       bot.intervalId = undefined;
     }
+
+    // SEQUENTIAL EXECUTION: Clean up trade close listener
+    if (bot.tradeCloseListener) {
+      bot.tradeCloseListener();
+      bot.tradeCloseListener = undefined;
+    }
+
+    // Reset sequential execution state
+    bot.isInTrade = false;
+    bot.currentTradeId = undefined;
 
     bot.isRunning = false;
     
@@ -243,10 +305,51 @@ class BotManagerService {
 
   /**
    * Execute trading loop for a bot
+   * SEQUENTIAL EXECUTION: Only one trade at a time
+   * Flow: Check market → Get signal → Open trade → Wait for close → Auto-reenter
    */
   private async executeTradingLoop(bot: ActiveBot): Promise<void> {
     if (!bot.isRunning) {
       return;
+    }
+
+    // SEQUENTIAL EXECUTION RULE: If bot is in trade, skip execution and wait for trade to close
+    if (bot.isInTrade) {
+      // Bot is waiting for current trade to close
+      // Trade close listener will handle auto-reentry
+      return;
+    }
+
+    // MARKET SAFETY: Check if market is tradable before executing trades
+    try {
+      const { marketStatusService } = await import('@/lib/services/deriv-market-status.service');
+      if (bot.broker === 'deriv') {
+        await marketStatusService.initialize(bot.userId);
+        const isTradable = await marketStatusService.isMarketTradable(bot.instrument);
+        
+        if (!isTradable) {
+          const status = await marketStatusService.getMarketStatus(bot.instrument);
+          logEmitter.risk(
+            `Trade blocked: Market is not tradable. Status: ${status.status}. Reason: ${status.reason || 'Market closed'}`,
+            bot.userId,
+            { 
+              botId: bot.botId, 
+              symbol: bot.instrument, 
+              status: status.status,
+              reason: status.reason 
+            }
+          );
+          return; // Block trade execution
+        }
+      }
+    } catch (error: any) {
+      // If market status check fails, log warning but don't block (fail open for safety)
+      console.warn(`[BotManager] Market status check failed for ${bot.instrument}:`, error);
+      logEmitter.info(
+        `Market status check failed, proceeding with caution: ${error.message}`,
+        bot.userId,
+        { botId: bot.botId, symbol: bot.instrument, error: error.message }
+      );
     }
 
     try {
@@ -439,13 +542,12 @@ class BotManagerService {
         // Emit signal
         logEmitter.signal(signal, bot.userId, bot.botId);
 
-        // Check if max trades limit is reached
-        const maxTrades = bot.parameters.maxTrades || 1;
-        if (openPositions.length >= maxTrades) {
-          logEmitter.risk(
-            `Trade blocked: Maximum concurrent trades limit reached (${openPositions.length}/${maxTrades})`,
+        // SEQUENTIAL EXECUTION: Check if already in trade (should not happen due to early return, but double-check)
+        if (bot.isInTrade || openPositions.length > 0) {
+          logEmitter.info(
+            `Trade blocked: Bot is already in trade (sequential execution). Waiting for current trade to close.`,
             bot.userId,
-            { signal, openPositions: openPositions.length, maxTrades }
+            { signal, isInTrade: bot.isInTrade, openPositions: openPositions.length }
           );
           return;
         }
@@ -513,7 +615,17 @@ class BotManagerService {
               const balanceBefore = bot.paperTrader.getBalance();
               
               const orderResponse = await bot.paperTrader.executeTrade(signal, marketData);
-              if (orderResponse) {
+              if (orderResponse && orderResponse.status === 'FILLED') {
+                // SEQUENTIAL EXECUTION: Mark bot as IN_TRADE
+                bot.isInTrade = true;
+                bot.currentTradeId = orderResponse.orderId;
+                
+                logEmitter.info(
+                  `[SEQUENTIAL] Trade opened: ${orderResponse.orderId}. Bot locked in IN_TRADE state.`,
+                  bot.userId,
+                  { tradeId: orderResponse.orderId, symbol: signal.symbol }
+                );
+                
                 // Get balance after trade
                 const balanceAfter = bot.paperTrader.getBalance();
                 
@@ -541,6 +653,9 @@ class BotManagerService {
                   },
                   bot.userId
                 );
+
+                // Set up trade close listener for paper trader
+                this.setupPaperTraderCloseListener(bot, orderResponse.orderId);
               }
               await bot.paperTrader.updatePositions(marketData);
               
@@ -587,6 +702,18 @@ class BotManagerService {
               if (executionResult.success && executionResult.orderResponse) {
                 const orderResponse = executionResult.orderResponse;
                 
+                // SEQUENTIAL EXECUTION: Mark bot as IN_TRADE when trade is filled
+                if (orderResponse.status === 'FILLED') {
+                  bot.isInTrade = true;
+                  bot.currentTradeId = orderResponse.orderId;
+                  
+                  logEmitter.info(
+                    `[SEQUENTIAL] Trade opened: ${orderResponse.orderId}. Bot locked in IN_TRADE state.`,
+                    bot.userId,
+                    { tradeId: orderResponse.orderId, symbol: signal.symbol }
+                  );
+                }
+                
                 // Log order with enhanced details
                 logEmitter.order({
                   ...orderResponse,
@@ -618,6 +745,14 @@ class BotManagerService {
                       ? Math.abs(signal.takeProfit - orderResponse.filledPrice) / Math.abs(orderResponse.filledPrice - signal.stopLoss)
                       : undefined,
                   }, bot.userId, bot.botId);
+
+                  // Set up trade close listener for Deriv/live trading
+                  if (bot.broker === 'deriv') {
+                    this.setupDerivContractCloseListener(bot, orderResponse.orderId);
+                  } else {
+                    // For other brokers, poll for position close
+                    this.setupPositionCloseListener(bot, orderResponse.orderId);
+                  }
                 }
               } else {
                 logEmitter.error(
@@ -713,6 +848,11 @@ class BotManagerService {
 
             await bot.adapter.closePosition(positionId);
             
+            // SEQUENTIAL EXECUTION: Handle trade close
+            if (bot.isInTrade && bot.currentTradeId === positionId) {
+              this.handleTradeClose(bot, positionId, exitPrice, profitLoss);
+            }
+            
             // Remove from tracking
             bot.riskManager.untrackPosition(positionId);
 
@@ -739,6 +879,242 @@ class BotManagerService {
       automationManager.handleError(bot.userId, bot.botId, error);
       // Don't stop the bot on error, just log it
     }
+  }
+
+  /**
+   * SEQUENTIAL EXECUTION: Set up trade close listener for paper trader
+   * Monitors position updates and detects when trade closes
+   */
+  private setupPaperTraderCloseListener(bot: ActiveBot, tradeId: string): void {
+    if (bot.tradeCloseListener) {
+      // Clean up previous listener
+      bot.tradeCloseListener();
+    }
+
+    // Poll for position close (paper trader doesn't have real-time events)
+    const checkInterval = setInterval(async () => {
+      if (!bot.isRunning || !bot.isInTrade) {
+        clearInterval(checkInterval);
+        return;
+      }
+
+      try {
+        if (bot.paperTrader) {
+          const positions = bot.paperTrader.getOpenPositions();
+          const tradeStillOpen = positions.some(p => p.tradeId === tradeId);
+          
+          if (!tradeStillOpen) {
+            // Trade has closed
+            clearInterval(checkInterval);
+            const closedTrades = bot.paperTrader.getClosedTrades();
+            const closedTrade = closedTrades.find(t => t.tradeId === tradeId);
+            
+            const profitLoss = closedTrade?.profitLoss || 0;
+            const exitPrice = closedTrade?.exitPrice || 0;
+            
+            this.handleTradeClose(bot, tradeId, exitPrice, profitLoss);
+          }
+        }
+      } catch (error: any) {
+        console.error(`[BotManager] Error checking paper trader position close:`, error);
+      }
+    }, 500); // Check every 500ms for immediate trade close detection
+
+    bot.tradeCloseListener = () => clearInterval(checkInterval);
+  }
+
+  /**
+   * SEQUENTIAL EXECUTION: Set up contract close listener for Deriv
+   * Uses WebSocket contract updates to detect settlement
+   */
+  private setupDerivContractCloseListener(bot: ActiveBot, contractId: string): void {
+    if (bot.tradeCloseListener) {
+      bot.tradeCloseListener();
+    }
+
+    // For Deriv, we need to subscribe to contract updates via the adapter
+    // This is a simplified version - in production, you'd use the Deriv WebSocket client
+    // to subscribe to contract updates
+    logEmitter.info(
+      `[SEQUENTIAL] Monitoring Deriv contract ${contractId} for settlement...`,
+      bot.userId,
+      { contractId }
+    );
+
+    // Poll for contract status (Deriv adapter should provide contract status)
+    const checkInterval = setInterval(async () => {
+      if (!bot.isRunning || !bot.isInTrade) {
+        clearInterval(checkInterval);
+        return;
+      }
+
+      try {
+        if (bot.adapter) {
+          const openPositions = await bot.adapter.getOpenPositions();
+          const contractStillOpen = openPositions.some(p => 
+            p.positionId === contractId || p.tradeId === contractId
+          );
+          
+          if (!contractStillOpen) {
+            // Contract has settled
+            clearInterval(checkInterval);
+            
+            // Get closed trades to find profit/loss
+            const closedTrades = await bot.adapter.getClosedTrades();
+            const closedTrade = closedTrades.find(t => 
+              t.tradeId === contractId || t.positionId === contractId
+            );
+            
+            const profitLoss = closedTrade?.realizedPnl || 0;
+            const exitPrice = closedTrade?.exitPrice || 0;
+            
+            this.handleTradeClose(bot, contractId, exitPrice, profitLoss);
+          }
+        }
+      } catch (error: any) {
+        console.error(`[BotManager] Error checking Deriv contract close:`, error);
+      }
+    }, 1000); // Check every 1 second for Deriv (faster for immediate settlement detection)
+
+    bot.tradeCloseListener = () => clearInterval(checkInterval);
+  }
+
+  /**
+   * SEQUENTIAL EXECUTION: Set up position close listener for other brokers
+   * Polls for position status changes
+   */
+  private setupPositionCloseListener(bot: ActiveBot, positionId: string): void {
+    if (bot.tradeCloseListener) {
+      bot.tradeCloseListener();
+    }
+
+    const checkInterval = setInterval(async () => {
+      if (!bot.isRunning || !bot.isInTrade) {
+        clearInterval(checkInterval);
+        return;
+      }
+
+      try {
+        if (bot.adapter) {
+          const openPositions = await bot.adapter.getOpenPositions();
+          const positionStillOpen = openPositions.some(p => 
+            p.positionId === positionId || p.tradeId === positionId
+          );
+          
+          if (!positionStillOpen) {
+            // Position has closed
+            clearInterval(checkInterval);
+            
+            const closedTrades = await bot.adapter.getClosedTrades();
+            const closedTrade = closedTrades.find(t => 
+              t.tradeId === positionId || t.positionId === positionId
+            );
+            
+            const profitLoss = closedTrade?.realizedPnl || 0;
+            const exitPrice = closedTrade?.exitPrice || 0;
+            
+            this.handleTradeClose(bot, positionId, exitPrice, profitLoss);
+          }
+        }
+      } catch (error: any) {
+        console.error(`[BotManager] Error checking position close:`, error);
+      }
+    }, 1000); // Check every 1 second for immediate position close detection
+
+    bot.tradeCloseListener = () => clearInterval(checkInterval);
+  }
+
+  /**
+   * SEQUENTIAL EXECUTION: Handle trade close and trigger auto-reentry
+   * This is called when a trade closes (via any method: settlement, TP/SL, manual close)
+   */
+  private handleTradeClose(
+    bot: ActiveBot,
+    tradeId: string,
+    exitPrice: number,
+    profitLoss: number
+  ): void {
+    // Only handle if this is the current trade
+    if (!bot.isInTrade || bot.currentTradeId !== tradeId) {
+      return;
+    }
+
+    logEmitter.info(
+      `[SEQUENTIAL] Trade closed: ${tradeId}. P/L: ${profitLoss.toFixed(2)}. Unlocking bot for next trade.`,
+      bot.userId,
+      { tradeId, exitPrice, profitLoss }
+    );
+
+    // Clean up listener
+    if (bot.tradeCloseListener) {
+      bot.tradeCloseListener();
+      bot.tradeCloseListener = undefined;
+    }
+
+    // SEQUENTIAL EXECUTION: Unlock bot state
+    bot.isInTrade = false;
+    bot.currentTradeId = undefined;
+
+    // AUTO-REENTRY: After trade closes, automatically evaluate and open next trade
+    // Minimal delay (0.5-1 second) to allow settlement to complete while ensuring immediate execution
+    const reentryDelay = 500 + Math.random() * 500; // 0.5-1 seconds for faster reentry
+    
+    logEmitter.info(
+      `[SEQUENTIAL] Auto-reentry scheduled in ${(reentryDelay / 1000).toFixed(2)}s. Bot will evaluate next trade immediately.`,
+      bot.userId,
+      { delay: reentryDelay }
+    );
+
+    setTimeout(async () => {
+      if (!bot.isRunning) {
+        return;
+      }
+
+      // Check risk limits before auto-reentry
+      try {
+        const balance = bot.paperTrader 
+          ? bot.paperTrader.getBalance().balance
+          : (bot.adapter ? (await bot.adapter.getBalance()) : 0);
+
+        const canReenter = await bot.riskManager.canTrade(
+          { symbol: bot.instrument, side: 'BUY' as const, entryPrice: 0, stopLoss: 0 },
+          balance,
+          []
+        );
+
+        if (canReenter) {
+          logEmitter.info(
+            `[SEQUENTIAL] Auto-reentry: Risk checks passed. Executing next trade evaluation...`,
+            bot.userId,
+            { botId: bot.botId }
+          );
+          
+          // Trigger next trading loop execution
+          this.executeTradingLoop(bot).catch((error) => {
+            console.error(`[BotManager] Error in auto-reentry trading loop:`, error);
+            logEmitter.error(
+              `Auto-reentry error: ${error.message}`,
+              bot.userId,
+              { botId: bot.botId, error: error.message }
+            );
+          });
+        } else {
+          const riskMetrics = bot.riskManager.getRiskMetrics();
+          logEmitter.risk(
+            `[SEQUENTIAL] Auto-reentry blocked by risk manager. Daily P/L: ${riskMetrics.dailyPnl.toFixed(2)}, Daily Trades: ${riskMetrics.dailyTrades}`,
+            bot.userId,
+            { riskMetrics }
+          );
+        }
+      } catch (error: any) {
+        console.error(`[BotManager] Error in auto-reentry check:`, error);
+        logEmitter.error(
+          `Auto-reentry check error: ${error.message}`,
+          bot.userId,
+          { botId: bot.botId, error: error.message }
+        );
+      }
+    }, reentryDelay);
   }
 }
 

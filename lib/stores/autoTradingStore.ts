@@ -24,7 +24,7 @@ interface ApiResponse<T = any> {
 }
 
 export type BrokerType = 'exness' | 'deriv' | null;
-export type BotStatus = 'idle' | 'running' | 'stopping' | 'error';
+export type BotStatus = 'idle' | 'running' | 'in_trade' | 'stopping' | 'error';
 export type Instrument = {
   symbol: string;
   name: string;
@@ -153,7 +153,7 @@ const persistConfig = {
     // Don't persist: API keys, passwords, connection IDs, live data
   }),
   // Transform dates back to Date objects on rehydration
-  onRehydrateStorage: () => (state) => {
+  onRehydrateStorage: () => (state: any) => {
     if (state) {
       // Convert botStartTime from string to Date
       if (state.botStartTime) {
@@ -429,11 +429,17 @@ export const useAutoTradingStore = create<AutoTradingState>()(
           throw new Error('Bot, parameters, instrument, and broker must be selected');
         }
 
+        // Update status optimistically - don't wait for API response
+        // This prevents UI blocking
         set({ 
           botStatus: 'running', 
           botStartTime: new Date(),
           botStopTime: null, // Clear stop time when starting
         });
+        
+        // Use requestIdleCallback or setTimeout to defer the API call slightly
+        // This allows the UI to update first
+        await new Promise(resolve => setTimeout(resolve, 0));
 
         try {
           // Use new unified start API endpoint with timeout to prevent hanging

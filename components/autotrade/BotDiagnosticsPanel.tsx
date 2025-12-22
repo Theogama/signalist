@@ -3,10 +3,12 @@
 /**
  * Bot Diagnostics Panel
  * Shows real-time bot status, historical data, risk settings, and trading session info
+ * COMPLIANCE-AWARE: Differentiates between Deriv (API) and Exness (Manual/Read-Only)
  */
 
 import { useEffect, useState } from 'react';
 import { useAutoTradingStore } from '@/lib/stores/autoTradingStore';
+import { useWebSocket } from '@/lib/hooks/useWebSocket';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -17,8 +19,13 @@ import {
   Clock,
   Database,
   Shield,
-  Calendar
+  Calendar,
+  Wifi,
+  WifiOff,
+  Upload,
+  Lock
 } from 'lucide-react';
+import ExnessManualDataEntry from './ExnessManualDataEntry';
 
 export default function BotDiagnosticsPanel() {
   const {
@@ -29,7 +36,12 @@ export default function BotDiagnosticsPanel() {
     botParams,
     liveLogs,
     openTrades,
+    balance,
+    equity,
+    wsConnected,
   } = useAutoTradingStore();
+  
+  const { wsConnected: wsStatus } = useWebSocket();
 
   const [diagnostics, setDiagnostics] = useState<{
     historicalDataCount: number;
@@ -163,6 +175,36 @@ export default function BotDiagnosticsPanel() {
     }
   }, [liveLogs, botParams]);
 
+  // Show Exness manual data entry when Exness is connected (even if bot not running)
+  if (connectedBroker === 'exness' && botStatus !== 'running') {
+    return (
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5" />
+              Bot Diagnostics
+              <Badge variant="outline" className="border-yellow-500 text-yellow-400 bg-yellow-500/10">
+                <Lock className="h-3 w-3 mr-1" />
+                Exness - Read Only
+              </Badge>
+            </CardTitle>
+            <CardDescription>
+              Exness diagnostics require manual data entry. No API access available.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2 text-gray-400 mb-4">
+              <XCircle className="h-4 w-4" />
+              <span>Bot is not running. Upload data to see diagnostics.</span>
+            </div>
+          </CardContent>
+        </Card>
+        <ExnessManualDataEntry />
+      </div>
+    );
+  }
+
   if (botStatus !== 'running') {
     return (
       <Card>
@@ -206,14 +248,34 @@ export default function BotDiagnosticsPanel() {
             </Badge>
           )}
         </CardTitle>
-        <CardDescription>
-          Real-time bot status and health checks
-          {connectedBroker && (
-            <span className="ml-2 text-xs text-yellow-400">
-              ⚡ Optimized for {connectedBroker.toUpperCase()}
-            </span>
+        <div className="text-sm text-gray-400">
+          {connectedBroker === 'deriv' ? (
+            <div className="flex items-center gap-2">
+              <span>Live API diagnostics via Deriv WebSocket</span>
+              {wsStatus || wsConnected ? (
+                <Badge variant="outline" className="text-xs border-green-500 text-green-400 bg-green-500/10">
+                  <Wifi className="h-3 w-3 mr-1" />
+                  API Connected
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-xs border-yellow-500 text-yellow-400 bg-yellow-500/10">
+                  <WifiOff className="h-3 w-3 mr-1" />
+                  Connecting...
+                </Badge>
+              )}
+            </div>
+          ) : connectedBroker === 'exness' ? (
+            <div className="flex items-center gap-2">
+              <span>Manual / Read-Only diagnostics</span>
+              <Badge variant="outline" className="text-xs border-yellow-500 text-yellow-400 bg-yellow-500/10">
+                <Lock className="h-3 w-3 mr-1" />
+                No API Access
+              </Badge>
+            </div>
+          ) : (
+            <span>Real-time bot status and health checks</span>
           )}
-        </CardDescription>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Bot Status */}
@@ -320,6 +382,67 @@ export default function BotDiagnosticsPanel() {
           </div>
         </div>
 
+        {/* Broker-Specific Status */}
+        {connectedBroker === 'deriv' && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-300">Deriv API Status</span>
+              <Badge variant="outline" className="text-xs border-purple-500 text-purple-400 bg-purple-500/10">
+                LIVE DATA
+              </Badge>
+            </div>
+            <div className="space-y-1 text-xs">
+              <div className="flex items-center justify-between p-2 bg-gray-800 rounded">
+                <span className="text-gray-500">API Connection</span>
+                <div className="flex items-center gap-2">
+                  {wsStatus || wsConnected ? (
+                    <>
+                      <Wifi className="h-3 w-3 text-green-400" />
+                      <span className="text-green-400 font-semibold">Connected</span>
+                    </>
+                  ) : (
+                    <>
+                      <WifiOff className="h-3 w-3 text-yellow-400" />
+                      <span className="text-yellow-400 font-semibold">Disconnected</span>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center justify-between p-2 bg-gray-800 rounded">
+                <span className="text-gray-500">Balance (Live)</span>
+                <span className="text-gray-300 font-semibold">${balance.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between p-2 bg-gray-800 rounded">
+                <span className="text-gray-500">Equity (Live)</span>
+                <span className="text-gray-300 font-semibold">${equity.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {connectedBroker === 'exness' && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-300">Exness Status</span>
+              <Badge variant="outline" className="text-xs border-yellow-500 text-yellow-400 bg-yellow-500/10">
+                <Lock className="h-3 w-3 mr-1" />
+                Manual / Read-Only
+              </Badge>
+            </div>
+            <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+              <div className="text-xs text-yellow-400 flex items-start gap-2">
+                <AlertTriangle className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="font-semibold mb-1">No API Access Available</div>
+                  <div className="text-gray-400">
+                    Exness does not support API trading. Use manual data entry or CSV upload for diagnostics.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Current Status */}
         <div className="space-y-2">
           <div className="flex items-center gap-2">
@@ -328,7 +451,19 @@ export default function BotDiagnosticsPanel() {
           <div className="space-y-1 text-xs">
             <div className="flex items-center justify-between p-2 bg-gray-800 rounded">
               <span className="text-gray-500">Broker</span>
-              <span className="text-gray-300 font-semibold">{connectedBroker?.toUpperCase() || 'Not Connected'}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-300 font-semibold">{connectedBroker?.toUpperCase() || 'Not Connected'}</span>
+                {connectedBroker === 'deriv' && (
+                  <Badge variant="outline" className="text-xs border-purple-500 text-purple-400">
+                    API
+                  </Badge>
+                )}
+                {connectedBroker === 'exness' && (
+                  <Badge variant="outline" className="text-xs border-yellow-500 text-yellow-400">
+                    Manual
+                  </Badge>
+                )}
+              </div>
             </div>
             <div className="flex items-center justify-between p-2 bg-gray-800 rounded">
               <span className="text-gray-500">Instrument</span>
@@ -340,6 +475,13 @@ export default function BotDiagnosticsPanel() {
             </div>
           </div>
         </div>
+
+        {/* Exness Manual Data Entry (when running) */}
+        {connectedBroker === 'exness' && botStatus === 'running' && (
+          <div className="mt-4">
+            <ExnessManualDataEntry />
+          </div>
+        )}
 
         {/* Blocking Reasons */}
         {diagnostics.blockingReasons.length > 0 && (

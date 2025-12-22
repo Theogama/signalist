@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { AlertCircle, CheckCircle2, Loader2, Zap, Key, ArrowLeft, ArrowRight } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, Zap, Key, ArrowLeft, ArrowRight, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
 import DerivAccountCreator from './DerivAccountCreator';
@@ -248,7 +248,11 @@ export default function BrokerConnectionModal() {
         <DialogHeader>
           <DialogTitle className="text-lg sm:text-xl">Connect Broker</DialogTitle>
           <DialogDescription className="text-sm">
-            Connect to Exness or Deriv to enable auto-trading. Your credentials are stored securely.
+            {broker === 'deriv' 
+              ? 'Connect to Deriv for automated trading via official API. Your credentials are stored securely.'
+              : broker === 'exness'
+              ? 'Connect to Exness for trading signals and analytics. Trading must be done manually via MT5 platform.'
+              : 'Select a broker to connect. Deriv supports auto-trading; Exness provides signals only.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -260,10 +264,10 @@ export default function BrokerConnectionModal() {
             {/* Warning if trying to switch brokers */}
             {connectedBroker && broker && connectedBroker !== broker && (
               <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                <p className="text-xs sm:text-sm text-red-400 flex items-center gap-2">
+                <div className="text-xs sm:text-sm text-red-400 flex items-center gap-2">
                   <AlertCircle className="h-4 w-4" />
                   <span>Disconnect from {connectedBroker.toUpperCase()} first to connect to {broker.toUpperCase()}</span>
-                </p>
+                </div>
               </div>
             )}
             
@@ -431,8 +435,24 @@ export default function BrokerConnectionModal() {
           {/* Exness MT5 Fields (always required for Exness) */}
           {broker === 'exness' && (
             <div className="space-y-4 p-3 sm:p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm sm:text-base font-semibold text-gray-200">Exness MT5 Credentials</h3>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.open('https://www.exness.com/', '_blank')}
+                  className="text-xs border-yellow-500 text-yellow-400 hover:bg-yellow-500/10"
+                >
+                  <ExternalLink className="h-3 w-3 mr-1" />
+                  Open Exness MT5
+                </Button>
+              </div>
+              
+              <div className="p-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg mb-3">
+                <p className="text-xs text-yellow-400">
+                  💡 <span className="font-semibold">Note:</span> After connecting, you will need to trade manually on the Exness MT5 platform. 
+                  Signalist will provide trading signals and analytics based on your account data.
+                </p>
               </div>
               
               <div className="space-y-2">
@@ -607,24 +627,39 @@ export default function BrokerConnectionModal() {
                 <span className="hidden sm:inline">Connecting...</span>
                 <span className="sm:hidden">Connecting</span>
               </>
+            ) : broker === 'exness' ? (
+              <>
+                <span className="hidden sm:inline">Connect Exness (Signals & Analytics)</span>
+                <span className="sm:hidden">Connect Exness</span>
+              </>
             ) : useDemo ? (
               <>
-                <span className="hidden sm:inline">Connect {broker?.toUpperCase() || ''} (Demo Mode)</span>
-                <span className="sm:hidden">Connect {broker?.toUpperCase() || 'Broker'} Demo</span>
+                <span className="hidden sm:inline">Connect Deriv (Demo Mode)</span>
+                <span className="sm:hidden">Connect Deriv Demo</span>
               </>
             ) : (
               <>
-                <span className="hidden sm:inline">Connect to {broker?.toUpperCase() || ''}</span>
-                <span className="sm:hidden">Connect</span>
+                <span className="hidden sm:inline">Connect Deriv (Auto-Trading)</span>
+                <span className="sm:hidden">Connect Deriv</span>
               </>
             )}
           </Button>
 
           {/* Demo Mode Notice - Mobile Responsive */}
-          {useDemo && (
+          {useDemo && broker === 'deriv' && (
             <div className="p-3 sm:p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg">
               <p className="text-xs sm:text-sm text-blue-400 leading-relaxed">
                 💡 <span className="font-semibold">Demo Mode:</span> You're connecting with a virtual account. No real money will be used. Perfect for testing strategies!
+              </p>
+            </div>
+          )}
+
+          {/* Exness Connection Notice */}
+          {broker === 'exness' && (
+            <div className="p-3 sm:p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+              <p className="text-xs sm:text-sm text-blue-400 leading-relaxed">
+                ℹ️ <span className="font-semibold">Exness Connection:</span> This connection enables trading signals and analytics only. 
+                All trading must be done manually through the Exness MT5 platform. No automated trading is available for Exness.
               </p>
             </div>
           )}

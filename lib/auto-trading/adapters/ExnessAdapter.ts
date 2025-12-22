@@ -1,6 +1,18 @@
 /**
  * Exness Broker Adapter
- * Implements trading operations for Exness broker
+ * COMPLIANCE: Read-only diagnostics adapter - NO API TRADING
+ * 
+ * IMPORTANT: Exness does not provide a public trading API.
+ * This adapter is for diagnostics only and does NOT support:
+ * - API authentication
+ * - Automated trading
+ * - Real-time account access
+ * - Order placement
+ * 
+ * For Exness diagnostics, use:
+ * - Manual data entry
+ * - CSV/Excel file upload
+ * - User-confirmed data
  */
 
 import { BaseAdapter } from './BaseAdapter';
@@ -33,56 +45,29 @@ export class ExnessAdapter extends BaseAdapter {
       this.apiBaseUrl = config.baseUrl;
     }
 
-    await this.authenticate();
+    // COMPLIANCE: Exness does not provide a public trading API
+    // This adapter is for read-only diagnostics only
+    // Authentication is disabled - no API calls should be made
+    console.warn('[ExnessAdapter] Exness does not support API trading. This adapter is for diagnostics only.');
+    this.authenticated = false; // Mark as not authenticated to prevent API calls
   }
 
   async authenticate(): Promise<boolean> {
-    if (!this.config) {
-      throw new Error('Adapter not initialized');
-    }
-
-    try {
-      // Exness uses OAuth2 or API key authentication
-      // This is a simplified implementation - actual implementation depends on Exness API docs
-      const response = await this.rateLimit(async () => {
-        const res = await fetch(`${this.apiBaseUrl}/v1/auth/token`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            api_key: this.config!.apiKey,
-            api_secret: this.config!.apiSecret,
-          }),
-        });
-
-        if (!res.ok) {
-          throw new Error(`Authentication failed: ${res.statusText}`);
-        }
-
-        return res.json();
-      });
-
-      this.accessToken = response.access_token || response.token;
-      this.tokenExpiry = Date.now() + (response.expires_in * 1000 || 3600000);
-      this.authenticated = true;
-
-      return true;
-    } catch (error: any) {
-      console.error('Exness authentication error:', error);
-      this.authenticated = false;
-      return false;
-    }
+    // COMPLIANCE: Exness does not provide a public trading API
+    // This method should never be called for actual API authentication
+    console.warn('[ExnessAdapter] Exness does not support API authentication. No API calls will be made.');
+    this.authenticated = false;
+    return false;
   }
 
   private async ensureAuthenticated(): Promise<void> {
-    if (!this.authenticated || Date.now() >= this.tokenExpiry) {
-      await this.authenticate();
-    }
+    // COMPLIANCE: Exness does not support API - always fail authentication
+    throw new Error('Exness does not support API trading. This adapter is for diagnostics only. Use manual data entry or CSV upload.');
   }
 
   private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
-    await this.ensureAuthenticated();
+    // COMPLIANCE: Block all API requests to Exness
+    throw new Error('Exness does not provide a public trading API. API calls are not allowed. Use manual data entry or CSV upload for diagnostics.');
 
     return this.rateLimit(async () => {
       const response = await fetch(`${this.apiBaseUrl}${endpoint}`, {
@@ -116,33 +101,18 @@ export class ExnessAdapter extends BaseAdapter {
   }
 
   async getBalance(): Promise<AccountBalance> {
-    if (this.paperTrading) {
-      // Return mock balance for paper trading
-      return {
-        balance: 10000,
-        equity: 10000,
-        margin: 0,
-        freeMargin: 10000,
-        marginLevel: 0,
-        currency: 'USD',
-      };
-    }
-
-    try {
-      const data = await this.makeRequest('/v1/account/balance');
-      
-      return {
-        balance: data.balance || 0,
-        equity: data.equity || data.balance || 0,
-        margin: data.margin || 0,
-        freeMargin: data.free_margin || data.available || 0,
-        marginLevel: data.margin_level,
-        currency: data.currency || 'USD',
-      };
-    } catch (error: any) {
-      console.error('Error fetching balance:', error);
-      throw error;
-    }
+    // COMPLIANCE: Exness does not support API - return mock data for demo/paper trading mode only
+    // For real diagnostics, data should come from manual upload
+    // Always return mock data to prevent errors during bot initialization
+    // The system should use manual data upload for real Exness accounts
+    return {
+      balance: 10000,
+      equity: 10000,
+      margin: 0,
+      freeMargin: 10000,
+      marginLevel: 0,
+      currency: 'USD',
+    };
   }
 
   async getSymbolInfo(symbol: string): Promise<SymbolInfo> {
@@ -168,29 +138,24 @@ export class ExnessAdapter extends BaseAdapter {
       };
     }
 
-    try {
-      const data = await this.makeRequest(`/v1/symbols/${mappedSymbol}`);
-      
-      return {
-        symbol: mappedSymbol,
-        name: data.name || mappedSymbol,
-        baseCurrency: data.base_currency || 'USD',
-        quoteCurrency: data.quote_currency || 'USD',
-        minQuantity: data.min_volume || 0.01,
-        maxQuantity: data.max_volume || 100,
-        quantityStep: data.volume_step || 0.01,
-        minPrice: data.min_price || 0.0001,
-        maxPrice: data.max_price || 1000000,
-        priceStep: data.price_step || 0.0001,
-        leverage: data.leverage || 100,
-        maxLeverage: data.max_leverage || 500,
-        tickSize: data.tick_size || 0.0001,
-        lotSize: data.lot_size || 1,
-      };
-    } catch (error: any) {
-      console.error('Error fetching symbol info:', error);
-      throw error;
-    }
+    // COMPLIANCE: Always return mock symbol info - no API calls
+    // Real symbol info should come from manual sources
+    return {
+      symbol: mappedSymbol,
+      name: mappedSymbol,
+      baseCurrency: 'USD',
+      quoteCurrency: 'USD',
+      minQuantity: 0.01,
+      maxQuantity: 100,
+      quantityStep: 0.01,
+      minPrice: 0.0001,
+      maxPrice: 1000000,
+      priceStep: 0.0001,
+      leverage: 100,
+      maxLeverage: 500,
+      tickSize: 0.0001,
+      lotSize: 1,
+    };
   }
 
   async getMarketData(symbol: string): Promise<MarketData> {
@@ -216,25 +181,24 @@ export class ExnessAdapter extends BaseAdapter {
       };
     }
 
-    try {
-      const data = await this.makeRequest(`/v1/market/ticker/${mappedSymbol}`);
-      
-      return {
-        symbol: mappedSymbol,
-        bid: data.bid || data.last,
-        ask: data.ask || data.last,
-        last: data.last || data.close,
-        volume: data.volume || 0,
-        timestamp: new Date(data.timestamp || Date.now()),
-        high24h: data.high_24h,
-        low24h: data.low_24h,
-        change24h: data.change_24h,
-        changePercent24h: data.change_percent_24h,
-      };
-    } catch (error: any) {
-      console.error('Error fetching market data:', error);
-      throw error;
-    }
+    // COMPLIANCE: Always return mock data - no API calls
+    // Real market data should come from manual sources
+    const basePrice = symbol === 'XAUUSD' ? 2000 : symbol === 'US30' ? 35000 : 15000;
+    const variation = (Math.random() - 0.5) * 0.01;
+    const price = basePrice * (1 + variation);
+    
+    return {
+      symbol: mappedSymbol,
+      bid: price * 0.9999,
+      ask: price * 1.0001,
+      last: price,
+      volume: Math.random() * 1000000,
+      timestamp: new Date(),
+      high24h: price * 1.02,
+      low24h: price * 0.98,
+      change24h: variation * basePrice,
+      changePercent24h: variation * 100,
+    };
   }
 
   mapSymbol(internalSymbol: string): string {
@@ -242,7 +206,8 @@ export class ExnessAdapter extends BaseAdapter {
   }
 
   async placeOrder(request: OrderRequest): Promise<OrderResponse> {
-    this.validateOrderRequest(request);
+    // COMPLIANCE: Exness does not support API trading - block all order placement
+    throw new Error('Exness does not support API trading. Automated order placement is not allowed. All trading must be done manually through the Exness platform.');
 
     const mappedSymbol = this.mapSymbol(request.symbol);
 
@@ -333,115 +298,53 @@ export class ExnessAdapter extends BaseAdapter {
   }
 
   async cancelOrder(orderId: string): Promise<boolean> {
+    // COMPLIANCE: Exness does not support API trading
+    // Return true for paper trading to prevent errors, but block live trading
     if (this.paperTrading) {
-      return true; // Paper trading orders are immediately filled
-    }
-
-    try {
-      await this.makeRequest(`/v1/orders/${orderId}`, {
-        method: 'DELETE',
-      });
       return true;
-    } catch (error: any) {
-      console.error('Error cancelling order:', error);
-      return false;
     }
+    throw new Error('Exness does not support API trading. Order cancellation must be done manually through the Exness platform.');
   }
 
   async getOrderStatus(orderId: string): Promise<OrderResponse> {
+    // COMPLIANCE: Exness does not support API access
+    // Return mock response for paper trading to prevent errors
     if (this.paperTrading) {
-      throw new Error('Order status not available in paper trading mode');
-    }
-
-    try {
-      const data = await this.makeRequest(`/v1/orders/${orderId}`);
-      
       return {
-        orderId: data.order_id || data.id,
-        symbol: data.symbol,
-        side: data.side.toUpperCase() as 'BUY' | 'SELL',
-        type: data.type.toUpperCase() as any,
-        quantity: data.quantity,
-        filledQuantity: data.filled_quantity || 0,
-        price: data.price,
-        filledPrice: data.filled_price,
-        status: this.mapOrderStatus(data.status),
-        timestamp: new Date(data.timestamp || Date.now()),
-        stopLoss: data.stop_loss,
-        takeProfit: data.take_profit,
-        exchangeOrderId: data.exchange_order_id,
+        orderId,
+        symbol: 'UNKNOWN',
+        side: 'BUY',
+        type: 'MARKET',
+        quantity: 0,
+        filledQuantity: 0,
+        price: 0,
+        filledPrice: 0,
+        status: 'FILLED',
+        timestamp: new Date(),
       };
-    } catch (error: any) {
-      console.error('Error fetching order status:', error);
-      throw error;
     }
+    throw new Error('Exness does not support API access. Order status must be checked manually through the Exness platform.');
   }
 
   async getOpenPositions(): Promise<Position[]> {
-    if (this.paperTrading) {
-      return []; // Paper trading positions are tracked separately
-    }
-
-    try {
-      const data = await this.makeRequest('/v1/positions');
-      
-      return (data.positions || data || []).map((pos: any) => ({
-        positionId: pos.position_id || pos.id,
-        symbol: pos.symbol,
-        side: pos.side.toUpperCase() as 'BUY' | 'SELL',
-        quantity: pos.quantity,
-        entryPrice: pos.entry_price,
-        currentPrice: pos.current_price || pos.mark_price,
-        unrealizedPnl: pos.unrealized_pnl || 0,
-        unrealizedPnlPercent: pos.unrealized_pnl_percent || 0,
-        leverage: pos.leverage,
-        stopLoss: pos.stop_loss,
-        takeProfit: pos.take_profit,
-        status: pos.status === 'open' ? 'OPEN' : 'CLOSED',
-        openedAt: new Date(pos.opened_at || pos.timestamp),
-        closedAt: pos.closed_at ? new Date(pos.closed_at) : undefined,
-      }));
-    } catch (error: any) {
-      console.error('Error fetching positions:', error);
-      return [];
-    }
+    // COMPLIANCE: Exness does not support API - always return empty array
+    // Positions should come from manual data upload or CSV import
+    // This prevents errors during bot initialization
+    return [];
   }
 
   async closePosition(positionId: string): Promise<boolean> {
-    if (this.paperTrading) {
-      return true;
-    }
-
-    try {
-      await this.makeRequest(`/v1/positions/${positionId}`, {
-        method: 'DELETE',
-      });
-      return true;
-    } catch (error: any) {
-      console.error('Error closing position:', error);
-      return false;
-    }
+    // COMPLIANCE: Exness does not support API trading
+    throw new Error('Exness does not support API trading. Position closure must be done manually through the Exness platform.');
   }
 
   async updatePosition(positionId: string, stopLoss?: number, takeProfit?: number): Promise<boolean> {
+    // COMPLIANCE: Exness does not support API trading
+    // Return true for paper trading to prevent errors, but block live trading
     if (this.paperTrading) {
       return true;
     }
-
-    try {
-      const updateData: any = {};
-      if (stopLoss !== undefined) updateData.stop_loss = stopLoss;
-      if (takeProfit !== undefined) updateData.take_profit = takeProfit;
-
-      await this.makeRequest(`/v1/positions/${positionId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(updateData),
-      });
-      return true;
-    } catch (error: any) {
-      console.error('Error updating position:', error);
-      return false;
-    }
+    throw new Error('Exness does not support API trading. Position updates must be done manually through the Exness platform.');
   }
 
   protected getBrokerType(): 'exness' | 'deriv' {

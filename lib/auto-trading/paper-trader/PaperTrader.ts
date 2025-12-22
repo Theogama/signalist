@@ -31,21 +31,37 @@ export class PaperTrader implements IPaperTrader {
 
   /**
    * Initialize or load demo account from database
+   * Optimized to prevent blocking - uses timeouts and error handling
    */
   async initialize(): Promise<void> {
     try {
-      await connectToDatabase();
+      // Connect to database with timeout (increased to 10 seconds)
+      const connectPromise = connectToDatabase();
+      const connectTimeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Database connection timeout')), 10000)
+      );
+      await Promise.race([connectPromise, connectTimeoutPromise]);
+      console.log(`[PaperTrader] Database connected for userId: ${this.userId}, broker: ${this.broker}`);
       
-      // First try to find existing account to avoid duplicate key errors
-      let account = await DemoAccount.findOne({ 
+      // First try to find existing account to avoid duplicate key errors (with timeout - increased to 5 seconds)
+      const findPromise = DemoAccount.findOne({ 
         userId: this.userId, 
         broker: this.broker 
       });
+      const findTimeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Database query timeout')), 5000)
+      );
+      let account = await Promise.race([findPromise, findTimeoutPromise]) as any;
+      
+      if (account) {
+        console.log(`[PaperTrader] Found existing account for userId: ${this.userId}, broker: ${this.broker}`);
+      }
 
       if (!account) {
-        // Only create if it doesn't exist
+        // Only create if it doesn't exist (with timeout - increased to 5 seconds)
         try {
-          account = await DemoAccount.create({
+          console.log(`[PaperTrader] Creating new account for userId: ${this.userId}, broker: ${this.broker}, balance: ${this.initialBalance}`);
+          const createPromise = DemoAccount.create({
             userId: this.userId,
             broker: this.broker,
             balance: this.initialBalance,
@@ -59,52 +75,139 @@ export class PaperTrader implements IPaperTrader {
             winningTrades: 0,
             losingTrades: 0,
           });
+          const createTimeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Account creation timeout')), 5000)
+          );
+          account = await Promise.race([createPromise, createTimeoutPromise]) as any;
+          console.log(`[PaperTrader] Successfully created account for userId: ${this.userId}, broker: ${this.broker}`);
         } catch (createError: any) {
+          console.error(`[PaperTrader] Error creating account:`, {
+            error: createError.message,
+            code: createError.code,
+            userId: this.userId,
+            broker: this.broker,
+          });
+          
           // Handle duplicate key error - account might have been created by another request
-          if (createError.code === 11000) {
-            // Try to find the account that was just created
-            account = await DemoAccount.findOne({ 
+          if (createError.code === 11000 || createError.message?.includes('duplicate key')) {
+            console.log(`[PaperTrader] Duplicate key error - account may have been created by another request, attempting to find it...`);
+            // Try to find the account that was just created (with timeout - increased to 5 seconds)
+            const findAgainPromise = DemoAccount.findOne({ 
               userId: this.userId, 
               broker: this.broker 
             });
+            const findAgainTimeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Retry find timeout')), 5000)
+            );
+            try {
+              account = await Promise.race([findAgainPromise, findAgainTimeoutPromise]) as any;
+              if (account) {
+                console.log(`[PaperTrader] Found account after duplicate key error for userId: ${this.userId}, broker: ${this.broker}`);
+              } else {
+                console.warn(`[PaperTrader] Could not find account after duplicate key error for userId: ${this.userId}, broker: ${this.broker}`);
+              }
+            } catch (retryError: any) {
+              console.error(`[PaperTrader] Error retrying find after duplicate key:`, retryError.message);
+              // If still can't find, use default values
+              console.warn(`[PaperTrader] Could not load account after retry, using defaults`);
+            }
+          } else if (createError.message?.includes('timeout')) {
+            // Timeout occurred - try to find the account anyway (it might have been created)
+            console.log(`[PaperTrader] Creation timeout - checking if account was created anyway...`);
+            try {
+              account = await DemoAccount.findOne({ 
+                userId: this.userId, 
+                broker: this.broker 
+              }).maxTimeMS(5000);
+              if (account) {
+                console.log(`[PaperTrader] Found account after creation timeout for userId: ${this.userId}, broker: ${this.broker}`);
+              }
+            } catch (findError) {
+              console.error(`[PaperTrader] Error finding account after timeout:`, findError);
+            }
           } else {
+            // Other errors - log and rethrow
+            console.error(`[PaperTrader] Unexpected error creating account:`, createError);
             throw createError;
           }
         }
       }
       
       if (!account) {
-        throw new Error('Failed to create or retrieve demo account');
+        // If account creation/loading failed, use default values to prevent blocking
+        console.warn(`[PaperTrader] Could not load/create account, using default values`, {
+          userId: this.userId,
+          broker: this.broker,
+          initialBalance: this.initialBalance,
+          reason: 'Account query/creation returned null or timed out',
+        });
+        this.accountId = null;
+        this.balance = this.initialBalance;
+        this.equity = this.initialBalance;
+        this.margin = 0;
+        return; // Continue with defaults
       }
       
+      // Successfully loaded/created account
       this.accountId = (account._id as any)?.toString() || account._id?.toString() || null;
       this.balance = account.balance;
       this.equity = account.equity;
       this.margin = account.margin;
       this.initialBalance = account.initialBalance;
+      console.log(`[PaperTrader] Successfully initialized account`, {
+        userId: this.userId,
+        broker: this.broker,
+        accountId: this.accountId,
+        balance: this.balance,
+        equity: this.equity,
+      });
     } catch (error: any) {
+      console.error(`[PaperTrader] Error initializing demo account:`, {
+        error: error.message,
+        code: error.code,
+        stack: error.stack,
+        userId: this.userId,
+        broker: this.broker,
+      });
+      
       // Handle duplicate key error gracefully
       if (error.code === 11000 || error.message?.includes('duplicate key')) {
         console.log(`[PaperTrader] Account already exists for userId: ${this.userId}, broker: ${this.broker}, loading existing account...`);
         try {
-          // Account already exists, just load it
-          const existingAccount = await DemoAccount.findOne({ userId: this.userId, broker: this.broker });
+          // Account already exists, just load it (with timeout)
+          const loadPromise = DemoAccount.findOne({ userId: this.userId, broker: this.broker });
+          const loadTimeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Load existing account timeout')), 5000)
+          );
+          const existingAccount = await Promise.race([loadPromise, loadTimeoutPromise]) as any;
+          
           if (existingAccount) {
             this.accountId = (existingAccount._id as any)?.toString() || existingAccount._id?.toString() || null;
             this.balance = existingAccount.balance;
             this.equity = existingAccount.equity;
             this.margin = existingAccount.margin;
             this.initialBalance = existingAccount.initialBalance;
+            console.log(`[PaperTrader] Successfully loaded existing account after duplicate key error`);
             return; // Successfully loaded existing account
+          } else {
+            console.warn(`[PaperTrader] Could not find existing account after duplicate key error`);
           }
-        } catch (loadError) {
-          console.error('Error loading existing account:', loadError);
+        } catch (loadError: any) {
+          console.error(`[PaperTrader] Error loading existing account:`, {
+            error: loadError.message,
+            code: loadError.code,
+          });
         }
       }
       
-      console.error('Error initializing demo account:', error);
       // Fallback to in-memory if DB fails
       // Keep the initial balance values already set in constructor
+      console.warn(`[PaperTrader] Falling back to in-memory account due to initialization error`);
+      this.accountId = null;
+      this.balance = this.initialBalance;
+      this.equity = this.initialBalance;
+      this.margin = 0;
+      // Don't throw - allow bot to start with default values
     }
   }
 

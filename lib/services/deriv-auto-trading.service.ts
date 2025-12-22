@@ -111,9 +111,6 @@ export class DerivAutoTradingService extends EventEmitter {
       this.activeContracts.set(contract.contract_id, contract);
       await this.subscribeToContract(contract.contract_id);
     }
-
-    // Get Deriv token ID for reference
-    const tokenDoc = await DerivApiToken.findOne({ userId: config.userId });
     
     // Create session record with enhanced fields
     const session = new AutoTradingSession({

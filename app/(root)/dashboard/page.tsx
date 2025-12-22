@@ -7,7 +7,7 @@ import { getBotTrades } from '@/lib/actions/bot.actions';
 import { getSignals } from '@/lib/actions/signals.actions';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { TrendingUp, Activity, Signal, BarChart3 } from 'lucide-react';
+import { TrendingUp, Activity, Signal, BarChart3, Store } from 'lucide-react';
 import TradingViewWidget from '@/components/TradingViewWidget';
 import { MARKET_OVERVIEW_WIDGET_CONFIG } from '@/lib/constants';
 
@@ -106,12 +106,20 @@ export default async function DashboardPage() {
       </div>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <Link href="/signals">
           <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-yellow-500/50 transition-colors cursor-pointer">
             <Signal className="h-6 w-6 text-yellow-400 mb-3" />
             <h3 className="text-lg font-semibold text-gray-100 mb-1">Trading Signals</h3>
             <p className="text-sm text-gray-400">View and manage trading signals</p>
+          </div>
+        </Link>
+
+        <Link href="/marketplace">
+          <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-yellow-500/50 transition-colors cursor-pointer">
+            <Store className="h-6 w-6 text-orange-400 mb-3" />
+            <h3 className="text-lg font-semibold text-gray-100 mb-1">Bot Marketplace</h3>
+            <p className="text-sm text-gray-400">Discover and install trading bots</p>
           </div>
         </Link>
 

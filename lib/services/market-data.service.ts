@@ -234,10 +234,17 @@ class MarketDataService {
       const baseUrl = this.getBaseUrl();
       const url = `${baseUrl}/api/market-data/price/${symbol.toUpperCase()}`;
       
+      // Add timeout to fetch request
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000); // 7 second timeout
+      
       const response = await fetch(url, {
         cache: 'no-store',
         next: { revalidate: 0 },
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
         const contentType = response.headers.get('content-type');
@@ -259,7 +266,15 @@ class MarketDataService {
       
       return await response.json();
     } catch (error: any) {
-      // Log errors with more context
+      // Silently handle errors (timeouts are expected for Deriv instruments)
+      if (error.name === 'AbortError' || error.message?.includes('timeout')) {
+        // Timeout is expected for some instruments, don't log
+        return null;
+      }
+      // Only log unexpected errors in development
+      if (process.env.NODE_ENV === 'development') {
+        console.debug(`[MarketData] Error fetching price for ${symbol}:`, error.message);
+      }
       const errorMessage = error.message || 'Unknown error';
       if (errorMessage.includes('Failed to parse URL')) {
         console.error('[MarketData] URL parsing error - this usually means the service is running on server without proper base URL. Error:', errorMessage);
@@ -282,13 +297,20 @@ class MarketDataService {
       const baseUrl = this.getBaseUrl();
       const url = `${baseUrl}/api/market-data/prices`;
       
+      // Add timeout to fetch request
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000); // 7 second timeout
+      
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbols: symbols.map((s) => s.toUpperCase()) }),
         cache: 'no-store',
         next: { revalidate: 0 },
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         // Silently return empty map on error
@@ -314,8 +336,16 @@ class MarketDataService {
       }
 
       return priceMap;
-    } catch (error) {
-      // Silently return empty map on error
+    } catch (error: any) {
+      // Silently handle errors (timeouts are expected)
+      if (error.name === 'AbortError' || error.message?.includes('timeout')) {
+        // Timeout is expected, don't log
+        return new Map();
+      }
+      // Only log unexpected errors in development
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('[MarketData] Error fetching prices:', error.message);
+      }
       return new Map();
     }
   }

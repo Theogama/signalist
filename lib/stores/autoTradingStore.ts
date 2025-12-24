@@ -604,15 +604,36 @@ export const useAutoTradingStore = create<AutoTradingState>()(
 
       // Add log
       addLog: (log) => {
+        // Throttle log additions to prevent excessive updates
+        if (typeof window !== 'undefined' && (window as any).__logThrottle) {
+          return;
+        }
+        
+        if (typeof window !== 'undefined') {
+          (window as any).__logThrottle = true;
+          setTimeout(() => {
+            (window as any).__logThrottle = false;
+          }, 500); // Throttle to max once per 500ms
+        }
+
         const newLog: LiveLog = {
           ...log,
           id: `log-${Date.now()}-${Math.random()}`,
           timestamp: new Date(),
         };
+        
+        // Use requestIdleCallback if available for non-critical updates
+        const updateLogs = () => {
+          set((state) => ({
+            liveLogs: [...state.liveLogs.slice(-99), newLog], // Keep last 100 logs
+          }));
+        };
 
-        set((state) => ({
-          liveLogs: [...state.liveLogs.slice(-99), newLog], // Keep last 100 logs
-        }));
+        if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+          requestIdleCallback(updateLogs, { timeout: 1000 });
+        } else {
+          setTimeout(updateLogs, 0);
+        }
       },
 
       // Clear logs
@@ -689,6 +710,18 @@ export const useAutoTradingStore = create<AutoTradingState>()(
 
       // Sync trades from API
       syncTrades: (newOpenTrades, newClosedTrades) => {
+        // Throttle trade syncs to prevent excessive updates
+        if (typeof window !== 'undefined' && (window as any).__tradeSyncThrottle) {
+          return;
+        }
+        
+        if (typeof window !== 'undefined') {
+          (window as any).__tradeSyncThrottle = true;
+          setTimeout(() => {
+            (window as any).__tradeSyncThrottle = false;
+          }, 1000); // Throttle to max once per second
+        }
+
         set((state) => {
           // Create maps for quick lookup
           const newOpenMap = new Map(newOpenTrades.map(t => [t.id, t]));

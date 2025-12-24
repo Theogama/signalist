@@ -582,6 +582,101 @@ export class DerivServerWebSocketClient extends EventEmitter {
   }
 
   /**
+   * Get proposal for a contract
+   */
+  async getProposal(request: {
+    symbol: string;
+    contract_type: 'CALL' | 'PUT';
+    amount: number;
+    duration: number;
+    duration_unit: 't' | 's' | 'm' | 'h' | 'd';
+  }): Promise<{
+    success: boolean;
+    proposal?: {
+      ask_price: number;
+      payout: number;
+      spot: number;
+    };
+    error?: {
+      code: string;
+      message: string;
+    };
+  }> {
+    return new Promise((resolve) => {
+      const reqId = this.requestId++;
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(reqId);
+        resolve({ 
+          success: false, 
+          error: { code: 'TIMEOUT', message: 'Proposal request timeout' } 
+        });
+      }, 10000);
+
+      this.pendingRequests.set(reqId, {
+        resolve: (data: any) => {
+          clearTimeout(timeout);
+          if (data.error) {
+            resolve({ 
+              success: false, 
+              error: { 
+                code: data.error.code || 'UNKNOWN', 
+                message: data.error.message || 'Proposal request failed' 
+              } 
+            });
+          } else if (data.proposal) {
+            // Deriv API returns proposal data in data.proposal
+            const proposalData = data.proposal;
+            // Handle different possible field names from Deriv API
+            const askPrice = proposalData.ask_price || proposalData.display_value || proposalData.price || 0;
+            const payout = proposalData.payout || proposalData.display_amount || proposalData.amount || 0;
+            const spot = proposalData.spot || proposalData.spot_price || proposalData.current_spot || 0;
+            
+            resolve({ 
+              success: true, 
+              proposal: {
+                ask_price: parseFloat(String(askPrice)),
+                payout: parseFloat(String(payout)),
+                spot: parseFloat(String(spot)),
+              }
+            });
+          } else {
+            // Log the response for debugging
+            console.warn('[DerivServerWS] Unexpected proposal response structure:', JSON.stringify(data, null, 2));
+            resolve({ 
+              success: false, 
+              error: { 
+                code: 'INVALID_RESPONSE', 
+                message: `Invalid proposal response - expected 'proposal' field. Response keys: ${Object.keys(data).join(', ')}` 
+              } 
+            });
+          }
+        },
+        reject: (error: Error) => {
+          clearTimeout(timeout);
+          resolve({ 
+            success: false, 
+            error: { code: 'REQUEST_ERROR', message: error.message } 
+          });
+        },
+        timeout,
+      });
+
+      // Send proposal request
+      this.sendMessage({
+        proposal: 1,
+        amount: request.amount,
+        basis: 'stake',
+        contract_type: request.contract_type,
+        currency: 'USD',
+        duration: request.duration,
+        duration_unit: request.duration_unit,
+        symbol: request.symbol,
+        req_id: reqId,
+      });
+    });
+  }
+
+  /**
    * Get open contracts/positions
    */
   async getOpenContracts(): Promise<DerivContract[]> {

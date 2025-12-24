@@ -342,7 +342,7 @@ export async function GET(request: NextRequest) {
               console.error('Error sending live update:', error);
             }
           }
-        }, 250); // Check every 250ms, but send updates based on priority intervals
+        }, 1000); // Check every 1 second (reduced frequency to prevent overload)
       },
       cancel() {
         // Cleanup on close

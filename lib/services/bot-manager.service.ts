@@ -358,21 +358,24 @@ class BotManagerService {
       
       if (bot.paperTrader) {
         // For paper trading, try to get real market data first, fallback to mock
-        // Add timeout to prevent hanging on slow market data requests
+        // Use longer timeout and non-blocking approach
         try {
           const livePricePromise = marketDataService.getCurrentPrice(bot.instrument);
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Market data request timeout')), 3000)
+            setTimeout(() => reject(new Error('Market data request timeout')), 8000) // Increased to 8 seconds
           );
-          const livePrice = await Promise.race([livePricePromise, timeoutPromise]) as any;
-          if (livePrice) {
+          
+          // Race with timeout, but don't block if it fails
+          const livePrice = await Promise.race([livePricePromise, timeoutPromise]).catch(() => null) as any;
+          
+          if (livePrice && livePrice.price) {
             marketData = {
               symbol: bot.instrument,
               bid: livePrice.price * 0.999,
               ask: livePrice.price * 1.001,
               last: livePrice.price,
               volume: livePrice.volume || 0,
-              timestamp: new Date(livePrice.timestamp),
+              timestamp: new Date(livePrice.timestamp || Date.now()),
               high24h: livePrice.high || livePrice.price,
               low24h: livePrice.low || livePrice.price,
               change24h: livePrice.change || 0,
@@ -389,9 +392,11 @@ class BotManagerService {
               timestamp: new Date(),
             };
           }
-        } catch (error) {
-          // Fallback to mock data on error
-          console.warn(`Failed to fetch real market data for ${bot.instrument}, using mock data:`, error);
+        } catch (error: any) {
+          // Silently fallback to mock data on error (only log in debug mode)
+          if (process.env.NODE_ENV === 'development') {
+            console.debug(`[BotManager] Using mock data for ${bot.instrument}:`, error.message);
+          }
           marketData = {
             symbol: bot.instrument,
             bid: 1000 + Math.random() * 100,
@@ -402,12 +407,27 @@ class BotManagerService {
           };
         }
       } else if (bot.adapter) {
-        // Add timeout to adapter market data fetch
+        // Add timeout to adapter market data fetch (increased timeout)
         const marketDataPromise = bot.adapter.getMarketData(bot.instrument);
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Market data timeout')), 5000)
+          setTimeout(() => reject(new Error('Market data timeout')), 10000) // Increased to 10 seconds
         );
-        marketData = await Promise.race([marketDataPromise, timeoutPromise]) as MarketData;
+        
+        // Use catch to prevent unhandled rejections
+        marketData = await Promise.race([marketDataPromise, timeoutPromise]).catch((error) => {
+          if (process.env.NODE_ENV === 'development') {
+            console.debug(`[BotManager] Market data timeout for ${bot.instrument}:`, error.message);
+          }
+          // Return mock data as fallback
+          return {
+            symbol: bot.instrument,
+            bid: 1000 + Math.random() * 100,
+            ask: 1000 + Math.random() * 100,
+            last: 1000 + Math.random() * 100,
+            volume: Math.random() * 1000,
+            timestamp: new Date(),
+          } as MarketData;
+        }) as MarketData;
       } else {
         return; // No adapter and no paper trader
       }

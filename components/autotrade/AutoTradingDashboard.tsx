@@ -112,9 +112,9 @@ export default function AutoTradingDashboard() {
     // Fetch immediately on mount
     fetchAccountBalance();
 
-    // Then poll every 15 seconds (reduced frequency for better performance)
+    // Then poll every 60 seconds (further increased to reduce load)
     // WebSocket handles real-time balance updates
-    const interval = setInterval(fetchAccountBalance, 15000);
+    const interval = setInterval(fetchAccountBalance, 60000);
     return () => clearInterval(interval);
   }, [connectedBroker, setBalance]);
 
@@ -183,9 +183,9 @@ export default function AutoTradingDashboard() {
     // Fetch immediately
     fetchPositions();
 
-    // Poll every 10 seconds (reduced frequency for better performance)
+    // Poll every 60 seconds (further increased to reduce load)
     // WebSocket handles real-time updates, polling is just a backup
-    const interval = setInterval(fetchPositions, 10000);
+    const interval = setInterval(fetchPositions, 60000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedBroker, botStatus, setBalance]);

@@ -8,6 +8,7 @@ import { Schema, model, models, type Document, type Model } from 'mongoose';
 export interface SignalistBotTradeDoc extends Document {
   tradeId: string; // UUID
   userId: string;
+  botId?: string; // Bot ID that executed this trade
   broker: 'exness' | 'deriv';
   symbol: string;
   side: 'BUY' | 'SELL';
@@ -26,6 +27,7 @@ export interface SignalistBotTradeDoc extends Document {
   entryTimestamp: Date;
   exitTimestamp?: Date;
   brokerTradeId?: string; // Internal broker trade ID
+  isDemo?: boolean; // Whether this is a demo trade
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,7 +35,8 @@ export interface SignalistBotTradeDoc extends Document {
 const SignalistBotTradeSchema = new Schema<SignalistBotTradeDoc>(
   {
     tradeId: { type: String, required: true, unique: true, index: true },
-    userId: { type: String, required: true },
+    userId: { type: String, required: true, index: true },
+    botId: { type: String, index: true }, // Index for bot performance queries
     broker: { type: String, enum: ['exness', 'deriv'], required: true, index: true },
     symbol: { type: String, required: true, uppercase: true, index: true },
     side: { type: String, enum: ['BUY', 'SELL'], required: true },
@@ -57,6 +60,7 @@ const SignalistBotTradeSchema = new Schema<SignalistBotTradeDoc>(
     entryTimestamp: { type: Date, required: true, default: Date.now, index: true },
     exitTimestamp: { type: Date, index: true },
     brokerTradeId: { type: String },
+    isDemo: { type: Boolean, default: false, index: true }, // Track demo vs live trades
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
   },
@@ -68,6 +72,9 @@ SignalistBotTradeSchema.index({ userId: 1, entryTimestamp: -1 });
 SignalistBotTradeSchema.index({ userId: 1, status: 1 });
 SignalistBotTradeSchema.index({ userId: 1, broker: 1, status: 1 });
 SignalistBotTradeSchema.index({ symbol: 1, entryTimestamp: -1 });
+SignalistBotTradeSchema.index({ botId: 1, entryTimestamp: -1 }); // Bot performance queries
+SignalistBotTradeSchema.index({ userId: 1, botId: 1, entryTimestamp: -1 }); // User bot performance
+SignalistBotTradeSchema.index({ userId: 1, isDemo: 1, entryTimestamp: -1 }); // Demo vs live separation
 
 // Update updatedAt before save
 SignalistBotTradeSchema.pre('save', function (next) {

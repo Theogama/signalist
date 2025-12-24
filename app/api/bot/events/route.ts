@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
         botManager.on('status_update', handleStatusUpdate);
         botManager.on('candle_processed', handleCandleProcessed);
 
-        // Send periodic status updates
+        // Send periodic status updates (reduced frequency to prevent overload)
         const statusInterval = setInterval(async () => {
           try {
             const status = botManager.getBotStatus(userId);
@@ -119,7 +119,7 @@ export async function GET(request: NextRequest) {
           } catch (error) {
             console.error('Error sending periodic status update:', error);
           }
-        }, 5000); // Every 5 seconds
+        }, 10000); // Every 10 seconds (reduced from 5s)
 
         // Cleanup on close
         request.signal.addEventListener('abort', () => {

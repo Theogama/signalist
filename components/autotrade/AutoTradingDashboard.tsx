@@ -19,7 +19,8 @@ import {
   Play,
   Square,
   X,
-  CheckCircle2
+  CheckCircle2,
+  Lock as LockIcon
 } from 'lucide-react';
 import BrokerConnectionModal from './BrokerConnectionModal';
 import InstrumentsSelector from './InstrumentsSelector';
@@ -37,6 +38,15 @@ import ClosedTrades from './ClosedTrades';
 import BotDiagnosticsPanel from './BotDiagnosticsPanel';
 import UniversalMetricsPanel from './UniversalMetricsPanel';
 import MarketAvailabilityAlert from './MarketAvailabilityAlert';
+import TimeBasedAnalytics from './TimeBasedAnalytics';
+import DerivTokenManager from '@/components/deriv/DerivTokenManager';
+import DerivAutoTradingStatus from '@/components/deriv/DerivAutoTradingStatus';
+import DerivAnalytics from '@/components/deriv/DerivAnalytics';
+import DerivRiskMetrics from '@/components/deriv/DerivRiskMetrics';
+import DerivTradeExecution from '@/components/deriv/DerivTradeExecution';
+import DerivTradeHistory from '@/components/deriv/DerivTradeHistory';
+import DerivMarketStatusAlert from '@/components/deriv/DerivMarketStatusAlert';
+import DerivExecutionResults from '@/components/deriv/DerivExecutionResults';
 import { useWebSocket } from '@/lib/hooks/useWebSocket';
 import { useStateRestoration } from '@/lib/hooks/useStateRestoration';
 import { useTradeAlerts } from '@/lib/hooks/useTradeAlerts';
@@ -216,7 +226,7 @@ export default function AutoTradingDashboard() {
               )}
               {connectedBroker === 'exness' && (
                 <Badge variant="outline" className="border-yellow-500 text-yellow-400">
-                  <Lock className="h-3 w-3 mr-1" />
+                  <LockIcon className="h-3 w-3 mr-1" />
                   EXNESS - EXTERNAL MT5
                 </Badge>
               )}
@@ -230,7 +240,7 @@ export default function AutoTradingDashboard() {
           )}
           {connectedBroker === 'exness' && (
             <div className="flex items-center gap-2 text-sm text-yellow-400">
-              <Lock className="h-4 w-4" />
+              <LockIcon className="h-4 w-4" />
               <span>Exness - Signals & Analytics Only</span>
             </div>
           )}
@@ -439,8 +449,44 @@ export default function AutoTradingDashboard() {
           {/* Universal Metrics */}
           <UniversalMetricsPanel />
 
+          {/* Deriv-Specific Components (only show when Deriv is connected) */}
+          {connectedBroker === 'deriv' && (
+            <>
+              {/* Deriv Market Status Alert */}
+              <DerivMarketStatusAlert />
+
+              {/* Deriv Token Management */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle>Deriv Token</CardTitle>
+                      <CardDescription>Manage your Deriv API token</CardDescription>
+                    </div>
+                    <DerivTokenManager />
+                  </div>
+                </CardHeader>
+              </Card>
+
+              {/* Deriv Auto-Trading Status */}
+              <DerivAutoTradingStatus />
+
+              {/* Deriv Risk Metrics */}
+              <DerivRiskMetrics />
+
+              {/* Deriv Execution Results */}
+              <DerivExecutionResults />
+            </>
+          )}
+
           {/* P/L Tracker */}
           <PLTracker />
+
+          {/* Time-Based Analytics */}
+          <TimeBasedAnalytics />
+          
+          {/* Deriv Analytics (only show when Deriv is connected) */}
+          {connectedBroker === 'deriv' && <DerivAnalytics />}
 
           {/* Start/Stop Controls */}
           <Card>
@@ -475,6 +521,17 @@ export default function AutoTradingDashboard() {
         <OpenTrades />
         <ClosedTrades />
       </div>
+
+      {/* Deriv-Specific Trading Components (only show when Deriv is connected) */}
+      {connectedBroker === 'deriv' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          {/* Manual Trade Execution */}
+          <DerivTradeExecution />
+          
+          {/* Deriv Trade History */}
+          <DerivTradeHistory />
+        </div>
+      )}
     </div>
   );
 }

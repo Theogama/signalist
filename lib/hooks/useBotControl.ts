@@ -106,8 +106,8 @@ export function useBotControl() {
 
   useEffect(() => {
     fetchStatus();
-    // Poll for status updates every 5 seconds
-    const interval = setInterval(fetchStatus, 5000);
+    // Poll for status updates every 10 seconds (reduced frequency to prevent page blocking)
+    const interval = setInterval(fetchStatus, 10000);
     return () => clearInterval(interval);
   }, [fetchStatus]);
 
@@ -120,6 +120,7 @@ export function useBotControl() {
     stopBot,
   };
 }
+
 
 
 

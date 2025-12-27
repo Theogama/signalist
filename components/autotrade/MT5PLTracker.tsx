@@ -83,11 +83,11 @@ export default function MT5PLTracker() {
     }
   }, [connectionId]);
 
-  // Poll every 1 second for P/L updates
+  // Poll for P/L updates (reduced frequency to prevent page blocking)
   useEffect(() => {
     if (!connectionId) return;
 
-    const interval = setInterval(fetchStats, 1000);
+    const interval = setInterval(fetchStats, 5000); // Increased to 5 seconds to reduce load
     return () => clearInterval(interval);
   }, [connectionId]);
 
@@ -219,6 +219,7 @@ export default function MT5PLTracker() {
     </Card>
   );
 }
+
 
 
 

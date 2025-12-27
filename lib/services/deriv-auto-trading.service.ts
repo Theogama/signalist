@@ -62,8 +62,8 @@ export class DerivAutoTradingService extends EventEmitter {
     await connectToDatabase();
 
     // Get and decrypt API token
-    const tokenDoc = await DerivApiToken.findOne({ userId: config.userId });
-    if (!tokenDoc || !tokenDoc.isValid) {
+    const tokenDoc = await DerivApiToken.findOne({ userId: config.userId }).select('+token');
+    if (!tokenDoc || !tokenDoc.isValid || !tokenDoc.token) {
       throw new Error('No valid Deriv API token found. Please connect your Deriv account first.');
     }
 

@@ -280,3 +280,4 @@ See `lib/services/deriv-market-status.example.ts` for comprehensive usage exampl
 - Custom trading hours per user
 - Multi-symbol batch status checks
 
+

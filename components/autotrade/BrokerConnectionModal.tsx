@@ -29,6 +29,7 @@ import { AlertCircle, CheckCircle2, Loader2, Zap, Key, ArrowLeft, ArrowRight, Ex
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
 import DerivAccountCreator from './DerivAccountCreator';
+import DerivTokenManager from '@/components/deriv/DerivTokenManager';
 
 export default function BrokerConnectionModal() {
   const [open, setOpen] = useState(false);
@@ -529,8 +530,9 @@ export default function BrokerConnectionModal() {
 
               {!useDemo && (
                 <div className="space-y-4 p-3 sm:p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-                  <div className="flex items-center gap-2 mb-2">
+                  <div className="flex items-center justify-between mb-2">
                     <h3 className="text-sm sm:text-base font-semibold text-gray-200">Deriv API Credentials</h3>
+                    <DerivTokenManager />
                   </div>
                   
                   <div className="space-y-2">

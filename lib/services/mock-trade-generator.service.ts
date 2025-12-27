@@ -281,3 +281,4 @@ export class MockTradeGenerator {
 // Singleton instance
 export const mockTradeGenerator = new MockTradeGenerator();
 
+

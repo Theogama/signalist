@@ -61,6 +61,52 @@ export default function UniversalMetricsPanel() {
     riskExposure: 0,
   });
 
+  const [derivExecutionData, setDerivExecutionData] = useState<{
+    totalTrades: number;
+    totalProfitLoss: number;
+    dailyTradeCount: number;
+    dailyProfitLoss: number;
+    activeContracts: number;
+    sessionStartedAt?: Date;
+  } | null>(null);
+
+  // Fetch Deriv execution data
+  useEffect(() => {
+    if (connectedBroker === 'deriv') {
+      const fetchDerivExecutionData = async () => {
+        try {
+          const response = await fetch('/api/deriv/auto-trading/status');
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.data?.session) {
+              const session = data.data.session;
+              const serviceStatus = data.data.serviceStatus || {};
+              setDerivExecutionData({
+                totalTrades: session.totalTrades || 0,
+                totalProfitLoss: session.totalProfitLoss || 0,
+                dailyTradeCount: serviceStatus.dailyTradeCount || 0,
+                dailyProfitLoss: serviceStatus.dailyProfitLoss || 0,
+                activeContracts: serviceStatus.activeContracts || 0,
+                sessionStartedAt: session.startedAt ? new Date(session.startedAt) : undefined,
+              });
+            } else {
+              setDerivExecutionData(null);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching Deriv execution data:', error);
+        }
+      };
+
+      fetchDerivExecutionData();
+      // Refresh every 10 seconds
+      const interval = setInterval(fetchDerivExecutionData, 10000);
+      return () => clearInterval(interval);
+    } else {
+      setDerivExecutionData(null);
+    }
+  }, [connectedBroker]);
+
   useEffect(() => {
     // Calculate metrics from trades
     const closed = closedTrades || [];
@@ -120,14 +166,36 @@ export default function UniversalMetricsPanel() {
       return sum + (t.entryPrice * t.quantity);
     }, 0);
 
+    // If Deriv execution data is available, use it to enhance metrics
+    let finalTotalTrades = closed.length;
+    let finalTotalPL = totalPL;
+    let finalWinningTrades = winning.length;
+    let finalLosingTrades = losing.length;
+    let finalWinRate = winRate;
+
+    if (derivExecutionData && connectedBroker === 'deriv') {
+      // Prefer Deriv execution data for total trades and P/L
+      finalTotalTrades = derivExecutionData.totalTrades || finalTotalTrades;
+      finalTotalPL = derivExecutionData.totalProfitLoss || finalTotalPL;
+      
+      // Calculate win/loss from Deriv data if available
+      // Note: We can't calculate exact win/loss from session data alone,
+      // so we'll keep the calculated values but use Deriv totals as primary
+      if (derivExecutionData.totalTrades > closed.length) {
+        // Deriv has more trades than our closed trades list
+        // This means some trades might be in progress or not yet synced
+        finalTotalTrades = derivExecutionData.totalTrades;
+      }
+    }
+
     setMetrics({
       balance,
       equity,
-      totalProfitLoss: totalPL,
-      winRate,
-      totalTrades: closed.length,
-      winningTrades: winning.length,
-      losingTrades: losing.length,
+      totalProfitLoss: finalTotalPL,
+      winRate: finalWinRate,
+      totalTrades: finalTotalTrades,
+      winningTrades: finalWinningTrades,
+      losingTrades: finalLosingTrades,
       maxDrawdown,
       maxDrawdownPercent,
       averageWin: avgWin,
@@ -135,7 +203,7 @@ export default function UniversalMetricsPanel() {
       profitFactor,
       riskExposure,
     });
-  }, [balance, equity, openTrades, closedTrades]);
+  }, [balance, equity, openTrades, closedTrades, derivExecutionData, connectedBroker]);
 
   const isDeriv = connectedBroker === 'deriv';
   const isExness = connectedBroker === 'exness';
@@ -230,6 +298,13 @@ export default function UniversalMetricsPanel() {
           <div className="p-3 bg-gray-800 rounded">
             <div className="text-gray-500">Total Trades</div>
             <div className="text-lg font-bold text-gray-100">{metrics.totalTrades}</div>
+            {isDeriv && derivExecutionData && (
+              <div className="text-purple-400 text-xs mt-1">
+                {derivExecutionData.activeContracts > 0 && (
+                  <span>{derivExecutionData.activeContracts} active</span>
+                )}
+              </div>
+            )}
           </div>
           <div className="p-3 bg-gray-800 rounded">
             <div className="text-gray-500">Avg Win</div>
@@ -244,6 +319,64 @@ export default function UniversalMetricsPanel() {
             </div>
           </div>
         </div>
+
+        {/* Deriv Execution Results Section */}
+        {isDeriv && derivExecutionData && (
+          <div className="pt-2 border-t border-gray-700">
+            <div className="flex items-center gap-2 mb-3">
+              <Activity className="h-4 w-4 text-purple-400" />
+              <span className="text-sm font-semibold text-gray-300">Deriv Execution Results</span>
+              <Badge variant="outline" className="text-xs border-purple-500 text-purple-400">
+                Live
+              </Badge>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded">
+                <div className="text-gray-400">Daily Trades</div>
+                <div className="text-lg font-bold text-purple-400">
+                  {derivExecutionData.dailyTradeCount}
+                </div>
+              </div>
+              <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded">
+                <div className="text-gray-400">Daily P/L</div>
+                <div className={`text-lg font-bold ${
+                  derivExecutionData.dailyProfitLoss >= 0 ? 'text-green-400' : 'text-red-400'
+                }`}>
+                  {derivExecutionData.dailyProfitLoss >= 0 ? '+' : ''}
+                  ${derivExecutionData.dailyProfitLoss.toFixed(2)}
+                </div>
+              </div>
+              <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded">
+                <div className="text-gray-400">Session Trades</div>
+                <div className="text-lg font-bold text-purple-400">
+                  {derivExecutionData.totalTrades}
+                </div>
+              </div>
+              <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded">
+                <div className="text-gray-400">Session P/L</div>
+                <div className={`text-lg font-bold ${
+                  derivExecutionData.totalProfitLoss >= 0 ? 'text-green-400' : 'text-red-400'
+                }`}>
+                  {derivExecutionData.totalProfitLoss >= 0 ? '+' : ''}
+                  ${derivExecutionData.totalProfitLoss.toFixed(2)}
+                </div>
+              </div>
+              {derivExecutionData.activeContracts > 0 && (
+                <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded col-span-2">
+                  <div className="text-gray-400">Active Contracts</div>
+                  <div className="text-lg font-bold text-yellow-400">
+                    {derivExecutionData.activeContracts}
+                  </div>
+                </div>
+              )}
+            </div>
+            {derivExecutionData.sessionStartedAt && (
+              <div className="text-xs text-gray-500 mt-2">
+                Session started: {derivExecutionData.sessionStartedAt.toLocaleString()}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Risk Metrics */}
         <div className="space-y-2">
@@ -306,4 +439,5 @@ export default function UniversalMetricsPanel() {
     </Card>
   );
 }
+
 

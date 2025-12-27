@@ -30,6 +30,13 @@ import {
   type BotStopEvent 
 } from '@/lib/services/bot-risk-manager.service';
 import { tradeLoggingService } from '@/lib/services/trade-logging.service';
+import { circuitBreakerService } from '@/lib/services/circuit-breaker.service';
+import { BotStateMachine, BotState, getBotStateMachine } from '@/lib/services/bot-state-machine.service';
+import { distributedLockService } from '@/lib/services/distributed-lock.service';
+import { webSocketSessionManager } from '@/lib/services/websocket-session-manager.service';
+import { userExecutionLockService } from '@/lib/services/user-execution-lock.service';
+import { userTradeLimitsService } from '@/lib/services/user-trade-limits.service';
+import { logEmitter } from '@/lib/auto-trading/log-emitter/LogEmitter';
 import { decrypt } from '@/lib/utils/encryption';
 import { randomUUID } from 'crypto';
 
@@ -76,6 +83,20 @@ export interface BotExecutionStatus {
   dailyProfitLoss: number;
   startedAt?: Date;
   lastTradeAt?: Date;
+  stateMachine?: {
+    currentState: string;
+    previousState?: string;
+    lastTransition?: Date;
+    transitionCount: number;
+    errorCount: number;
+  };
+  circuitBreaker?: {
+    state: string;
+    failures: number;
+    successes: number;
+    lastFailure?: Date;
+    lastSuccess?: Date;
+  };
   error?: string;
 }
 
@@ -105,8 +126,9 @@ export class BotExecutionEngine extends EventEmitter {
   private config: BotExecutionConfig | null = null;
   private wsClient: DerivServerWebSocketClient | null = null;
   private marketStatusService: DerivMarketStatusService;
-  private isRunning: boolean = false;
-  private isInTrade: boolean = false;
+  private stateMachine: BotStateMachine | null = null;
+  private isRunning: boolean = false; // Legacy flag, kept for compatibility
+  private isInTrade: boolean = false; // Legacy flag, kept for compatibility
   private currentTradeId: string | null = null;
   private currentContractId: string | null = null;
   private contractSubscription: (() => void) | null = null;
@@ -144,6 +166,8 @@ export class BotExecutionEngine extends EventEmitter {
   static removeInstance(botId: string, userId: string): void {
     const key = `${userId}-${botId}`;
     BotExecutionEngine.instances.delete(key);
+    // Also remove state machine instance
+    BotStateMachine.removeInstance(botId, userId);
   }
 
   /**
@@ -156,9 +180,22 @@ export class BotExecutionEngine extends EventEmitter {
     }
 
     this.config = config;
-    this.isRunning = true;
     this.startedAt = new Date();
     this.lastError = null;
+
+    // Initialize state machine
+    this.stateMachine = getBotStateMachine(config.botId, config.userId);
+    
+    // Set up state machine event listeners
+    this.stateMachine.on('state_changed', (event: any) => {
+      this.emit('state_changed', event);
+    });
+
+    // Transition to STARTING state
+    const started = await this.stateMachine.transition(BotState.STARTING, 'Bot initialization started');
+    if (!started) {
+      throw new Error('Failed to transition to STARTING state');
+    }
 
     try {
       // Initialize database connection
@@ -184,11 +221,11 @@ export class BotExecutionEngine extends EventEmitter {
       } else {
         // Use real Deriv API (token required)
         const tokenDoc = await DerivApiToken.findOne({ 
-          userId: config.userId, 
+          userId: config.userId,
           isValid: true 
-        });
+        }).select('+token');
 
-        if (!tokenDoc) {
+        if (!tokenDoc || !tokenDoc.token) {
           throw new Error('No valid Deriv API token found. Please connect your Deriv account first.');
         }
 
@@ -196,6 +233,9 @@ export class BotExecutionEngine extends EventEmitter {
 
         // Initialize WebSocket client
         this.wsClient = new DerivServerWebSocketClient(token);
+        
+        // PHASE 2 FIX: Register WebSocket session for token revocation invalidation
+        webSocketSessionManager.registerSession(config.userId, this.wsClient);
         
         // Set up error handlers
         this.wsClient.on('error', (error) => {
@@ -212,6 +252,37 @@ export class BotExecutionEngine extends EventEmitter {
 
       // Initialize market status service
       await this.marketStatusService.initialize(config.userId);
+
+      // Initialize circuit breaker for this bot
+      circuitBreakerService.initialize(config.botId, config.userId, {
+        failureThreshold: 5,        // Open circuit after 5 failures
+        failureWindowMs: 60000,     // Within 1 minute
+        recoveryTimeoutMs: 30000,   // Wait 30 seconds before recovery attempt
+        successThreshold: 2,        // Need 2 successes to close circuit
+        halfOpenMaxAttempts: 3,     // Max 3 attempts in half-open state
+      });
+
+      // Set up circuit breaker event listeners
+      circuitBreakerService.on('circuit_opened', (event: any) => {
+        if (event.botId === config.botId && event.userId === config.userId) {
+          this.emit('circuit_breaker_opened', {
+            botId: config.botId,
+            userId: config.userId,
+            reason: event.reason,
+          });
+          console.warn(`[BotExecutionEngine] Circuit breaker opened for bot ${config.botId}: ${event.reason}`);
+        }
+      });
+
+      circuitBreakerService.on('circuit_closed', (event: any) => {
+        if (event.botId === config.botId && event.userId === config.userId) {
+          this.emit('circuit_breaker_closed', {
+            botId: config.botId,
+            userId: config.userId,
+          });
+          console.log(`[BotExecutionEngine] Circuit breaker closed for bot ${config.botId} - recovery successful`);
+        }
+      });
 
       // Initialize risk manager if settings provided
       if (config.riskSettings) {
@@ -241,6 +312,15 @@ export class BotExecutionEngine extends EventEmitter {
         }
       }
 
+      // Transition to RUNNING state
+      const running = await this.stateMachine.transition(BotState.RUNNING, 'Bot initialized successfully');
+      if (!running) {
+        throw new Error('Failed to transition to RUNNING state');
+      }
+
+      // Update legacy flags (for backward compatibility)
+      this.isRunning = true;
+
       // Start execution loop
       this.startExecutionLoop();
 
@@ -248,6 +328,11 @@ export class BotExecutionEngine extends EventEmitter {
       
       console.log(`[BotExecutionEngine] Bot ${config.botId} started successfully`);
     } catch (error: any) {
+      // Transition to ERROR state on failure
+      if (this.stateMachine) {
+        await this.stateMachine.forceTransition(BotState.ERROR, error.message);
+      }
+      
       this.isRunning = false;
       this.lastError = error.message;
       this.emit('error', error);
@@ -260,6 +345,18 @@ export class BotExecutionEngine extends EventEmitter {
    * Gracefully shuts down and cleans up resources
    */
   async stopBot(): Promise<void> {
+    // Check state machine if available
+    if (this.stateMachine) {
+      const currentState = this.stateMachine.getState();
+      if (currentState === BotState.IDLE || currentState === BotState.STOPPING) {
+        return; // Already stopped or stopping
+      }
+
+      // Transition to STOPPING state
+      await this.stateMachine.transition(BotState.STOPPING, 'User requested stop');
+    }
+
+    // Legacy check
     if (!this.isRunning) {
       return;
     }
@@ -307,9 +404,16 @@ export class BotExecutionEngine extends EventEmitter {
     this.currentTradeId = null;
     this.currentContractId = null;
 
-    // Clear risk manager data
+    // Clear risk manager data and circuit breaker
     if (this.config) {
       botRiskManager.clearBot(this.config.botId, this.config.userId);
+      // Remove circuit breaker (cleanup)
+      circuitBreakerService.remove(this.config.botId, this.config.userId);
+    }
+
+    // Transition to IDLE state
+    if (this.stateMachine) {
+      await this.stateMachine.transition(BotState.IDLE, 'Bot stopped successfully');
     }
 
     this.emit('stopped', { 
@@ -324,6 +428,9 @@ export class BotExecutionEngine extends EventEmitter {
    * Get current execution status
    */
   getStatus(): BotExecutionStatus {
+    const circuitStatus = this.config ? circuitBreakerService.getStatus(this.config.botId, this.config.userId) : null;
+    const stateMachineStatus = this.stateMachine ? this.stateMachine.getStatus() : null;
+    
     return {
       botId: this.config?.botId || '',
       userId: this.config?.userId || '',
@@ -334,6 +441,20 @@ export class BotExecutionEngine extends EventEmitter {
       dailyProfitLoss: this.dailyProfitLoss,
       startedAt: this.startedAt || undefined,
       lastTradeAt: this.currentTradeId ? new Date() : undefined,
+      stateMachine: stateMachineStatus ? {
+        currentState: stateMachineStatus.currentState,
+        previousState: stateMachineStatus.previousState,
+        lastTransition: stateMachineStatus.lastTransition,
+        transitionCount: stateMachineStatus.transitionCount,
+        errorCount: stateMachineStatus.errorCount,
+      } : undefined,
+      circuitBreaker: circuitStatus ? {
+        state: circuitStatus.state,
+        failures: circuitStatus.failures,
+        successes: circuitStatus.successes,
+        lastFailure: circuitStatus.lastFailure,
+        lastSuccess: circuitStatus.lastSuccess,
+      } : undefined,
       error: this.lastError || undefined,
     };
   }
@@ -387,15 +508,48 @@ export class BotExecutionEngine extends EventEmitter {
    * Execute complete trading lifecycle
    * 
    * Lifecycle Steps:
-   * 1. Check market status
-   * 2. Fetch balance
-   * 3. Request proposal
-   * 4. Execute buy
-   * 5. Monitor result
-   * 6. Log transaction
+   * 1. Check circuit breaker
+   * 2. Check market status
+   * 3. Fetch balance
+   * 4. Request proposal
+   * 5. Execute buy
+   * 6. Monitor result
+   * 7. Log transaction
    */
   private async executeTradingCycle(): Promise<void> {
-    if (!this.config || !this.isRunning) {
+    if (!this.config) {
+      return;
+    }
+
+    // STATE MACHINE: Check if bot is in valid state for execution
+    if (!this.stateMachine) {
+      console.warn('[BotExecutionEngine] State machine not initialized');
+      return;
+    }
+
+    const currentState = this.stateMachine.getState();
+    if (!this.stateMachine.canExecuteTrades()) {
+      // If not RUNNING, check if we should pause
+      if (currentState === BotState.RUNNING && this.stateMachine.isInTrade()) {
+        // This shouldn't happen, but handle gracefully
+        return;
+      }
+      // If paused, try to resume if conditions allow
+      if (currentState === BotState.PAUSED) {
+        // Check if we can resume (circuit breaker, market status, etc.)
+        const circuitCheck = circuitBreakerService.canExecute(this.config.botId, this.config.userId);
+        if (circuitCheck.allowed) {
+          await this.stateMachine.transition(BotState.RUNNING, 'Resuming from pause');
+        } else {
+          return; // Stay paused
+        }
+      } else {
+        return; // Not in a state that allows execution
+      }
+    }
+
+    // Legacy checks (for backward compatibility)
+    if (!this.isRunning) {
       return;
     }
 
@@ -411,9 +565,51 @@ export class BotExecutionEngine extends EventEmitter {
       return;
     }
 
-    // Skip if already in trade (sequential execution)
+    // STATE MACHINE: Check if already in trade
+    if (this.stateMachine.isInTrade()) {
+      return; // Wait for trade to close
+    }
+
+    // Legacy check
     if (this.isInTrade) {
       return;
+    }
+
+    // CIRCUIT BREAKER: Check if execution is allowed
+    const circuitCheck = circuitBreakerService.canExecute(this.config.botId, this.config.userId);
+    if (!circuitCheck.allowed) {
+      // Transition to PAUSED state
+      await this.stateMachine.transition(BotState.PAUSED, `Circuit breaker: ${circuitCheck.message}`);
+      console.log(`[BotExecutionEngine] Circuit breaker blocking execution: ${circuitCheck.message}`);
+      this.emit('circuit_breaker_blocked', {
+        botId: this.config.botId,
+        userId: this.config.userId,
+        state: circuitCheck.state,
+        message: circuitCheck.message,
+      });
+      return;
+    }
+
+    // PHASE 2 FIX: Acquire user-level execution lock (prevents multiple bots per user trading simultaneously)
+    const userLockAcquired = await userExecutionLockService.acquireLock(this.config.userId, this.config.botId);
+    if (!userLockAcquired) {
+      console.log(`[BotExecutionEngine] User execution lock held by another bot, skipping cycle`);
+      return; // Another bot for this user is executing
+    }
+
+    // PHASE 2 FIX: Also acquire bot-specific distributed lock to prevent concurrent execution across instances
+    const lockKey = `bot-execution:${this.config.userId}:${this.config.botId}`;
+    const lockAcquired = await distributedLockService.acquireLock(lockKey, {
+      ttl: 30000, // 30 seconds (should be enough for one execution cycle)
+      retryInterval: 100,
+      maxRetries: 0, // Don't retry - if lock is held, skip this cycle
+    });
+
+    if (!lockAcquired) {
+      // Release user lock since we couldn't get bot lock
+      await userExecutionLockService.releaseLock(this.config.userId, this.config.botId);
+      console.log(`[BotExecutionEngine] Distributed lock held by another instance, skipping cycle`);
+      return; // Another instance is executing
     }
 
     // Set executing flag
@@ -482,17 +678,57 @@ export class BotExecutionEngine extends EventEmitter {
       const proposal = await this.requestProposal();
       if (!proposal.success || !proposal.proposal) {
         console.log(`[BotExecutionEngine] Proposal failed: ${proposal.error?.message}`);
+        // Record failure in circuit breaker
+        if (this.config && proposal.error) {
+          circuitBreakerService.recordFailure(
+            this.config.botId,
+            this.config.userId,
+            new Error(proposal.error.message || 'Proposal request failed')
+          );
+        }
         return;
       }
 
       // Yield to event loop
       await new Promise(resolve => setImmediate(resolve));
 
+      // PHASE 2 FIX: Check user trade limits before executing trade
+      if (this.config) {
+        const limitsCheck = await userTradeLimitsService.canExecuteTrade(
+          this.config.userId,
+          this.config.stake
+        );
+        if (!limitsCheck.allowed) {
+          console.log(`[BotExecutionEngine] Trade blocked by user trade limits: ${limitsCheck.reason}`);
+          logEmitter.warning(
+            `Trade blocked: ${limitsCheck.reason}`,
+            this.config.userId,
+            { botId: this.config.botId, reason: limitsCheck.reason }
+          );
+          return;
+        }
+      }
+
       // STEP 4: Execute buy
       const buyResult = await this.executeBuy(proposal.proposal);
       if (!buyResult.success || !buyResult.contractId) {
         console.log(`[BotExecutionEngine] Buy execution failed: ${buyResult.error}`);
+        // Record failure in circuit breaker
+        if (this.config && buyResult.error) {
+          circuitBreakerService.recordFailure(
+            this.config.botId,
+            this.config.userId,
+            new Error(buyResult.error)
+          );
+        }
         return;
+      }
+
+      // PHASE 2 FIX: Record trade execution in user trade limits service
+      if (this.config && buyResult.tradeId) {
+        await userTradeLimitsService.recordTrade(this.config.userId, buyResult.tradeId).catch((error) => {
+          console.warn(`[BotExecutionEngine] Failed to record trade in limits service: ${error.message}`);
+        });
       }
 
       // Yield to event loop
@@ -505,19 +741,43 @@ export class BotExecutionEngine extends EventEmitter {
 
       this.dailyTradeCount++;
       
+      // CIRCUIT BREAKER: Record success for trade execution
+      if (this.config) {
+        circuitBreakerService.recordSuccess(this.config.botId, this.config.userId);
+      }
+      
       // Emit event asynchronously to prevent blocking
       setImmediate(() => {
         this.emit('trade_executed', {
           tradeId: buyResult.tradeId,
           contractId: buyResult.contractId,
-          symbol: this.config.symbol,
-          stake: this.config.stake,
+          symbol: this.config?.symbol,
+          stake: this.config?.stake,
         });
       });
 
     } catch (error: any) {
+      // CIRCUIT BREAKER: Record failure
+      if (this.config) {
+        circuitBreakerService.recordFailure(this.config.botId, this.config.userId, error);
+      }
+      
       this.handleError('Error in trading cycle', error);
     } finally {
+      // PHASE 2 FIX: Release locks
+      if (this.config) {
+        // Release bot-specific lock
+        const lockKey = `bot-execution:${this.config.userId}:${this.config.botId}`;
+        await distributedLockService.releaseLock(lockKey).catch((error) => {
+          console.warn(`[BotExecutionEngine] Failed to release distributed lock: ${error.message}`);
+        });
+
+        // Release user-level lock
+        await userExecutionLockService.releaseLock(this.config.userId, this.config.botId).catch((error) => {
+          console.warn(`[BotExecutionEngine] Failed to release user execution lock: ${error.message}`);
+        });
+      }
+      
       // Always clear the executing flag
       this.isExecuting = false;
     }
@@ -525,6 +785,7 @@ export class BotExecutionEngine extends EventEmitter {
 
   /**
    * STEP 1: Check market status
+   * FAIL-CLOSED: If market status cannot be verified, trading is blocked for safety
    */
   private async checkMarketStatus(): Promise<{ status: MarketStatus; isTradable: boolean }> {
     if (!this.config) {
@@ -544,8 +805,13 @@ export class BotExecutionEngine extends EventEmitter {
       };
     } catch (error: any) {
       console.error('[BotExecutionEngine] Market status check error:', error);
-      // Fail open - assume market is tradable if check fails
-      return { status: MarketStatus.UNKNOWN, isTradable: true };
+      // FAIL-CLOSED: If we cannot verify market status, block trading for safety
+      // This prevents trading during unknown market conditions or API failures
+      this.emit('market_status_check_failed', {
+        symbol: this.config.symbol,
+        error: error.message,
+      });
+      return { status: MarketStatus.UNKNOWN, isTradable: false };
     }
   }
 
@@ -672,6 +938,11 @@ export class BotExecutionEngine extends EventEmitter {
       this.currentTradeId = tradeId;
       this.currentContractId = contractId;
 
+      // STATE MACHINE: Transition to IN_TRADE state
+      if (this.stateMachine) {
+        await this.stateMachine.transition(BotState.IN_TRADE, `Trade opened: ${tradeId}`);
+      }
+
       return {
         success: true,
         tradeId,
@@ -759,6 +1030,11 @@ export class BotExecutionEngine extends EventEmitter {
         this.currentTradeId = null;
         this.currentContractId = null;
 
+        // STATE MACHINE: Transition back to RUNNING state (trade closed)
+        if (this.stateMachine) {
+          await this.stateMachine.transition(BotState.RUNNING, `Trade closed: ${tradeId}`);
+        }
+
         // Unsubscribe from contract updates
         if (this.contractSubscription) {
           try {
@@ -769,7 +1045,10 @@ export class BotExecutionEngine extends EventEmitter {
           this.contractSubscription = null;
         }
 
-        // RISK CHECK: Check trade result for stop loss/take profit
+        // RISK MANAGEMENT: Check if trade result triggers bot risk limits
+        // NOTE: Binary options (CALL/PUT) do NOT support stop loss/take profit during execution
+        // They expire automatically at the end of their duration. This check is for BOT-LEVEL
+        // risk management (stopping the bot after accumulated losses), not contract-level SL/TP.
         if (this.config?.riskSettings) {
           botRiskManager.recordTradeResult(
             this.config.botId,
@@ -778,25 +1057,27 @@ export class BotExecutionEngine extends EventEmitter {
             trade.lotOrStake
           );
 
-          const tradeResultCheck = botRiskManager.checkTradeResult(
+          // Check if this trade result triggers bot risk limits
+          // This is post-trade risk management, not contract-level SL/TP
+          const riskLimitCheck = botRiskManager.checkTradeResult(
             this.config.botId,
             this.config.userId,
             profitLoss,
             trade.lotOrStake
           );
 
-          if (tradeResultCheck.reason) {
+          if (riskLimitCheck.reason) {
             this.emit('trade_risk_event', {
-              reason: tradeResultCheck.reason,
-              message: tradeResultCheck.message,
+              reason: riskLimitCheck.reason,
+              message: riskLimitCheck.message,
               profitLoss,
             });
 
-            // Stop bot if stop loss hit
-            if (tradeResultCheck.shouldStop && tradeResultCheck.reason === BotStopReason.STOP_LOSS_HIT) {
+            // Stop bot if risk limit hit (e.g., daily loss limit, consecutive losses)
+            if (riskLimitCheck.shouldStop) {
               await this.stopBotWithReason(
-                BotStopReason.STOP_LOSS_HIT,
-                tradeResultCheck.message || 'Stop loss hit'
+                riskLimitCheck.reason!,
+                riskLimitCheck.message || 'Risk limit reached'
               );
             }
           }
@@ -882,14 +1163,39 @@ export class BotExecutionEngine extends EventEmitter {
     
     console.error(`[BotExecutionEngine] ${context}:`, error);
     
+    // PHASE 2 FIX: Enhanced error logging with full context
+    logEmitter.error(
+      `${context}: ${errorMessage}`,
+      this.config?.userId,
+      {
+        botId: this.config?.botId,
+        context,
+        state: this.stateMachine?.getState(),
+        isRunning: this.isRunning,
+        isInTrade: this.isInTrade,
+        currentTradeId: this.currentTradeId,
+      },
+      error
+    );
+    
     this.emit('error', { context, error: errorMessage });
+
+    // STATE MACHINE: Transition to ERROR state for critical errors
+    const isConnectionError = context.includes('Connection') || context.includes('WebSocket');
+    const isApiError = context.includes('API') || context.includes('timeout');
+    const isCriticalError = isConnectionError || isApiError;
+
+    if (isCriticalError && this.stateMachine) {
+      const currentState = this.stateMachine.getState();
+      // Only transition to ERROR if not already in ERROR or STOPPING
+      if (currentState !== BotState.ERROR && currentState !== BotState.STOPPING) {
+        this.stateMachine.forceTransition(BotState.ERROR, errorMessage).catch(console.error);
+      }
+    }
 
     // Check if this is a critical error that should stop the bot
     if (this.config?.riskSettings) {
-      const isConnectionError = context.includes('Connection') || context.includes('WebSocket');
-      const isApiError = context.includes('API') || context.includes('timeout');
-
-      if (isConnectionError || isApiError) {
+      if (isCriticalError) {
         const riskResult = botRiskManager.handleApiError(
           this.config.botId,
           this.config.userId,

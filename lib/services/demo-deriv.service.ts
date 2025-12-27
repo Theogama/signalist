@@ -517,19 +517,32 @@ export class DemoDerivService extends EventEmitter {
 
       if (!demoAccount) {
         // Create new demo account
-        demoAccount = new DemoAccount({
-          userId: this.userId,
-          broker: 'deriv',
-          balance: this.initialBalance,
-          equity: this.initialBalance,
-          margin: 0,
-          freeMargin: this.initialBalance,
-          totalProfitLoss: 0,
-          totalTrades: 0,
-          winningTrades: 0,
-          losingTrades: 0,
-        });
-        await demoAccount.save();
+        try {
+          demoAccount = new DemoAccount({
+            userId: this.userId,
+            broker: 'deriv',
+            balance: this.initialBalance,
+            equity: this.initialBalance,
+            margin: 0,
+            freeMargin: this.initialBalance,
+            totalProfitLoss: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+          });
+          await demoAccount.save();
+        } catch (createError: any) {
+          // Handle duplicate key error - account might have been created by another request
+          if (createError.code === 11000 || createError.message?.includes('duplicate key')) {
+            console.log(`[DemoDeriv] Account already exists, loading existing account for userId: ${this.userId}`);
+            demoAccount = await DemoAccount.findOne({
+              userId: this.userId,
+              broker: 'deriv',
+            });
+          } else {
+            throw createError;
+          }
+        }
       }
 
       this.accountInfo = {
@@ -597,4 +610,5 @@ export class DemoDerivService extends EventEmitter {
     return this.accountInfo?.balance || this.initialBalance;
   }
 }
+
 

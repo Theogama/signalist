@@ -81,16 +81,9 @@ export class PaperTrader implements IPaperTrader {
           account = await Promise.race([createPromise, createTimeoutPromise]) as any;
           console.log(`[PaperTrader] Successfully created account for userId: ${this.userId}, broker: ${this.broker}`);
         } catch (createError: any) {
-          console.error(`[PaperTrader] Error creating account:`, {
-            error: createError.message,
-            code: createError.code,
-            userId: this.userId,
-            broker: this.broker,
-          });
-          
           // Handle duplicate key error - account might have been created by another request
           if (createError.code === 11000 || createError.message?.includes('duplicate key')) {
-            console.log(`[PaperTrader] Duplicate key error - account may have been created by another request, attempting to find it...`);
+            console.log(`[PaperTrader] Account already exists (duplicate key error) - attempting to load existing account for userId: ${this.userId}, broker: ${this.broker}`);
             // Try to find the account that was just created (with timeout - increased to 5 seconds)
             const findAgainPromise = DemoAccount.findOne({ 
               userId: this.userId, 
@@ -107,7 +100,7 @@ export class PaperTrader implements IPaperTrader {
                 console.warn(`[PaperTrader] Could not find account after duplicate key error for userId: ${this.userId}, broker: ${this.broker}`);
               }
             } catch (retryError: any) {
-              console.error(`[PaperTrader] Error retrying find after duplicate key:`, retryError.message);
+              console.warn(`[PaperTrader] Error retrying find after duplicate key:`, retryError.message);
               // If still can't find, use default values
               console.warn(`[PaperTrader] Could not load account after retry, using defaults`);
             }
@@ -123,11 +116,17 @@ export class PaperTrader implements IPaperTrader {
                 console.log(`[PaperTrader] Found account after creation timeout for userId: ${this.userId}, broker: ${this.broker}`);
               }
             } catch (findError) {
-              console.error(`[PaperTrader] Error finding account after timeout:`, findError);
+              console.warn(`[PaperTrader] Error finding account after timeout:`, findError);
             }
+            // Don't throw - will fall through to use defaults
           } else {
-            // Other errors - log and rethrow
-            console.error(`[PaperTrader] Unexpected error creating account:`, createError);
+            // Other unexpected errors - log and rethrow
+            console.error(`[PaperTrader] Unexpected error creating account:`, {
+              error: createError.message,
+              code: createError.code,
+              userId: this.userId,
+              broker: this.broker,
+            });
             throw createError;
           }
         }

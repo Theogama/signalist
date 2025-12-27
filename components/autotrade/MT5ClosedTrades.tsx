@@ -67,7 +67,7 @@ export default function MT5ClosedTrades() {
   useEffect(() => {
     if (connectionId) {
       fetchClosedTrades();
-      const interval = setInterval(fetchClosedTrades, 3000);
+      const interval = setInterval(fetchClosedTrades, 5000); // Increased to 5 seconds to reduce load and prevent page blocking
       return () => clearInterval(interval);
     }
   }, [connectionId]);

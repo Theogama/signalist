@@ -137,8 +137,8 @@ export default function StartStopControls() {
     };
     
     updateUptime();
-    // Update every second for real-time feel
-    const interval = setInterval(updateUptime, 1000);
+    // Update every 5 seconds to reduce UI update frequency
+    const interval = setInterval(updateUptime, 5000);
     return () => clearInterval(interval);
   }, [isRunning, botStartTime]);
   

@@ -304,3 +304,4 @@ describe('SignalistSMA3CStrategy', () => {
 
 
 
+

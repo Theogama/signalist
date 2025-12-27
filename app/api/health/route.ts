@@ -1,38 +1,26 @@
 /**
- * Health Check Endpoint
+ * Health Check API
+ * GET: Basic health check endpoint
  */
 
 import { NextResponse } from 'next/server';
 
 export async function GET() {
   try {
-    // Basic health check
-    const health = {
+    return NextResponse.json({
       status: 'healthy',
       timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      memory: {
-        used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-        total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
-      },
-    };
-
-    return NextResponse.json(health);
+      service: 'signalist-api',
+      version: process.env.npm_package_version || '1.0.0',
+    });
   } catch (error: any) {
     return NextResponse.json(
-      { status: 'unhealthy', error: error.message },
-      { status: 500 }
+      {
+        status: 'unhealthy',
+        timestamp: new Date().toISOString(),
+        error: error.message || 'Unknown error',
+      },
+      { status: 503 }
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-

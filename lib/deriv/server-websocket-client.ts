@@ -71,6 +71,9 @@ export class DerivServerWebSocketClient extends EventEmitter {
   private subscriptions: Map<string, {
     id: string;
     callback: (data: any) => void;
+    type: 'contract' | 'balance' | 'tick' | 'ohlc';
+    contractId?: string; // For contract subscriptions
+    restoreData?: any; // Metadata for restoration
   }> = new Map();
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 10;
@@ -103,6 +106,10 @@ export class DerivServerWebSocketClient extends EventEmitter {
           // Authorize with token
           try {
             await this.authorize();
+            
+            // PHASE 2 FIX: Restore subscriptions after reconnect
+            await this.restoreSubscriptions();
+            
             resolve();
           } catch (error) {
             reject(error);
@@ -523,9 +530,13 @@ export class DerivServerWebSocketClient extends EventEmitter {
     };
 
     // Store subscription
+    // PHASE 2 FIX: Store subscription metadata for restoration
     this.subscriptions.set(subscriptionKey, {
       id: subscriptionKey,
       callback: updateHandler,
+      type: 'contract',
+      contractId,
+      restoreData: { contractId },
     });
 
     // Send subscription request
@@ -568,9 +579,11 @@ export class DerivServerWebSocketClient extends EventEmitter {
       }
     };
 
+    // PHASE 2 FIX: Store subscription metadata for restoration
     this.subscriptions.set(subscriptionId, {
       id: subscriptionId,
       callback: handler,
+      type: 'balance',
     });
 
     return () => {
@@ -674,6 +687,49 @@ export class DerivServerWebSocketClient extends EventEmitter {
         req_id: reqId,
       });
     });
+  }
+
+  /**
+   * PHASE 2 FIX: Restore subscriptions after reconnect
+   */
+  private async restoreSubscriptions(): Promise<void> {
+    if (this.subscriptions.size === 0) {
+      return; // No subscriptions to restore
+    }
+
+    console.log(`[DerivServerWS] Restoring ${this.subscriptions.size} subscription(s) after reconnect...`);
+
+    // Restore each subscription
+    for (const [key, subscription] of this.subscriptions.entries()) {
+      try {
+        if (subscription.type === 'contract' && subscription.contractId) {
+          // Re-subscribe to contract updates
+          const reqId = this.requestId++;
+          this.sendMessage({
+            proposal_open_contract: 1,
+            contract_id: parseInt(subscription.contractId),
+            subscribe: 1,
+            req_id: reqId,
+          });
+          console.log(`[DerivServerWS] Restored contract subscription: ${subscription.contractId}`);
+        } else if (subscription.type === 'balance') {
+          // Re-subscribe to balance updates
+          const reqId = this.requestId++;
+          this.sendMessage({
+            balance: 1,
+            subscribe: 1,
+            req_id: reqId,
+          });
+          console.log(`[DerivServerWS] Restored balance subscription`);
+        }
+        // Other subscription types can be added here
+      } catch (error: any) {
+        console.warn(`[DerivServerWS] Failed to restore subscription ${key}:`, error);
+        // Continue with other subscriptions
+      }
+    }
+
+    console.log(`[DerivServerWS] Subscription restoration complete`);
   }
 
   /**

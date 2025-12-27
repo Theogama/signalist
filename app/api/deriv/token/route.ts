@@ -209,8 +209,8 @@ export async function PUT(request: NextRequest) {
     const userId = session.user.id;
     await connectToDatabase();
 
-    const tokenDoc = await DerivApiToken.findOne({ userId });
-    if (!tokenDoc) {
+    const tokenDoc = await DerivApiToken.findOne({ userId }).select('+token');
+    if (!tokenDoc || !tokenDoc.token) {
       return NextResponse.json(
         { success: false, error: 'No token found' },
         { status: 404 }
@@ -260,6 +260,7 @@ export async function PUT(request: NextRequest) {
     );
   }
 }
+
 
 
 

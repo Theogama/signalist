@@ -55,9 +55,9 @@ export async function GET(request: NextRequest) {
     const tokenDoc = await DerivApiToken.findOne({
       userId,
       isValid: true,
-    });
+    }).select('+token');
 
-    if (!tokenDoc) {
+    if (!tokenDoc || !tokenDoc.token) {
       return NextResponse.json(
         { success: false, error: 'No valid Deriv API token found' },
         { status: 404 }
@@ -143,4 +143,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
 

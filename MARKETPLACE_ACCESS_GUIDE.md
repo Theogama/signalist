@@ -201,3 +201,4 @@ Link to specific bot:
 
 All marketplace endpoints require authentication. Users must be logged in to access.
 
+

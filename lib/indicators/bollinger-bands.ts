@@ -108,3 +108,4 @@ export function calculatePercentB(price: number, bands: BollingerBandsPoint): nu
   return (price - bands.lower) / bandWidth;
 }
 
+

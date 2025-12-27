@@ -125,8 +125,67 @@ class LogEmitter {
     this.emit({ level: 'warning', message, userId, data, type: 'risk' });
   }
 
-  error(message: string, userId?: string, data?: any): void {
-    this.emit({ level: 'error', message, userId, data, type: 'system' });
+  /**
+   * PHASE 2 FIX: Enhanced error logging with full context
+   */
+  error(message: string, userId?: string, data?: any, error?: Error | any): void {
+    // Extract full error context
+    const errorContext: any = {
+      ...data,
+    };
+
+    // If error object is provided, extract full details
+    if (error) {
+      errorContext.error = {
+        name: error.name || 'Error',
+        message: error.message || String(error),
+        stack: error.stack,
+        code: error.code,
+        statusCode: error.statusCode,
+        status: error.status,
+      };
+
+      // Include any additional error properties
+      if (error.response) {
+        errorContext.error.response = {
+          status: error.response.status,
+          statusText: error.response.statusText,
+          data: error.response.data,
+        };
+      }
+
+      if (error.request) {
+        errorContext.error.request = {
+          url: error.request.url,
+          method: error.request.method,
+        };
+      }
+    }
+
+    // Include timestamp and environment context
+    errorContext.loggedAt = new Date().toISOString();
+    errorContext.environment = process.env.NODE_ENV || 'development';
+
+    this.emit({ 
+      level: 'error', 
+      message, 
+      userId, 
+      data: errorContext, 
+      type: 'system' 
+    });
+
+    // Also log to console with full stack trace for server-side debugging
+    if (error && error.stack) {
+      console.error(`[LogEmitter] Error logged for user ${userId || 'unknown'}:`, {
+        message,
+        error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        },
+        context: data,
+      });
+    }
   }
 
   success(message: string, userId?: string, data?: any): void {

@@ -123,3 +123,4 @@ export function getMACDSignal(macd: MACDPoint): 'bullish' | 'bearish' | 'neutral
   return 'neutral';
 }
 
+

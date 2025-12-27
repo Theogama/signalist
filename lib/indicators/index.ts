@@ -32,3 +32,4 @@ export interface IndicatorResult {
   signal?: 'bullish' | 'bearish' | 'overbought' | 'oversold' | 'neutral';
 }
 
+

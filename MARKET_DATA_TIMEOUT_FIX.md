@@ -62,3 +62,4 @@ Market data requests for Deriv instruments (BOOM1000, etc.) were timing out afte
 **Status**: ✅ Fixed
 **Date**: December 2024
 
+

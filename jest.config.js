@@ -5,7 +5,11 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  roots: ['<rootDir>/lib/signalist-bot/__tests__'],
+  roots: [
+    '<rootDir>/lib/signalist-bot/__tests__',
+    '<rootDir>/lib/services/__tests__',
+    '<rootDir>/lib/auto-trading/__tests__',
+  ],
   testMatch: ['**/__tests__/**/*.test.ts', '**/?(*.)+(spec|test).ts'],
   transform: {
     '^.+\\.ts$': 'ts-jest',
@@ -15,8 +19,12 @@ module.exports = {
   },
   collectCoverageFrom: [
     'lib/signalist-bot/**/*.ts',
-    '!lib/signalist-bot/**/*.d.ts',
-    '!lib/signalist-bot/__tests__/**',
+    'lib/services/**/*.ts',
+    'lib/auto-trading/**/*.ts',
+    '!**/*.d.ts',
+    '!**/__tests__/**',
+    '!**/*.examples.ts',
+    '!**/*.example.ts',
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
@@ -24,6 +32,7 @@ module.exports = {
   testTimeout: 10000,
   verbose: true,
 };
+
 
 
 

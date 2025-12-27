@@ -219,19 +219,22 @@ class BotManagerService {
       );
     });
     
-    // Set up interval for continuous trading loop (faster polling for immediate execution)
-    const intervalId = setInterval(async () => {
-      try {
-        await this.executeTradingLoop(activeBot);
-      } catch (error: any) {
-        console.error(`[BotManager] Error in trading loop for ${botId}:`, error);
-        logEmitter.error(
-          `Error in trading loop: ${error.message}`,
-          userId,
-          { botId, error: error.message }
-        );
-      }
-    }, 1000); // Check every 1 second for faster signal detection and immediate execution
+    // Set up interval for continuous trading loop (reduced frequency to prevent page blocking)
+    const intervalId = setInterval(() => {
+      // Use setTimeout to yield to event loop and prevent blocking
+      setTimeout(async () => {
+        try {
+          await this.executeTradingLoop(activeBot);
+        } catch (error: any) {
+          console.error(`[BotManager] Error in trading loop for ${botId}:`, error);
+          logEmitter.error(
+            `Error in trading loop: ${error.message}`,
+            userId,
+            { botId, error: error.message }
+          );
+        }
+      }, 0); // Yield to event loop before executing
+    }, 10000); // Increased to 10 seconds to reduce system load and prevent page blocking
 
     activeBot.intervalId = intervalId;
 
@@ -343,13 +346,15 @@ class BotManagerService {
         }
       }
     } catch (error: any) {
-      // If market status check fails, log warning but don't block (fail open for safety)
+      // FAIL-CLOSED: If market status check fails, block trading for safety
+      // This prevents trading during API failures or unknown market conditions
       console.warn(`[BotManager] Market status check failed for ${bot.instrument}:`, error);
-      logEmitter.info(
-        `Market status check failed, proceeding with caution: ${error.message}`,
+      logEmitter.risk(
+        `Trade blocked: Market status check failed. Cannot verify market availability: ${error.message}`,
         bot.userId,
         { botId: bot.botId, symbol: bot.instrument, error: error.message }
       );
+      return; // Block trade execution when status cannot be verified
     }
 
     try {
@@ -890,10 +895,18 @@ class BotManagerService {
         }
       }
     } catch (error: any) {
+      // PHASE 2 FIX: Enhanced error logging with full context
       logEmitter.error(
         `Error in trading loop: ${error.message}`,
         bot.userId,
-        { botId: bot.botId, error: error.message, stack: error.stack }
+        {
+          botId: bot.botId,
+          instrument: bot.instrument,
+          sessionId: bot.sessionId,
+          isInTrade: bot.isInTrade,
+          currentTradeId: bot.currentTradeId,
+        },
+        error
       );
       // Notify automation manager of error
       automationManager.handleError(bot.userId, bot.botId, error);
@@ -938,7 +951,7 @@ class BotManagerService {
       } catch (error: any) {
         console.error(`[BotManager] Error checking paper trader position close:`, error);
       }
-    }, 500); // Check every 500ms for immediate trade close detection
+    }, 2000); // Increased to 2 seconds to reduce system load and prevent page blocking
 
     bot.tradeCloseListener = () => clearInterval(checkInterval);
   }
@@ -994,7 +1007,7 @@ class BotManagerService {
       } catch (error: any) {
         console.error(`[BotManager] Error checking Deriv contract close:`, error);
       }
-    }, 1000); // Check every 1 second for Deriv (faster for immediate settlement detection)
+    }, 5000); // Increased to 5 seconds to reduce system load and prevent page blocking
 
     bot.tradeCloseListener = () => clearInterval(checkInterval);
   }
@@ -1039,7 +1052,7 @@ class BotManagerService {
       } catch (error: any) {
         console.error(`[BotManager] Error checking position close:`, error);
       }
-    }, 1000); // Check every 1 second for immediate position close detection
+    }, 5000); // Increased to 5 seconds to reduce system load and prevent page blocking
 
     bot.tradeCloseListener = () => clearInterval(checkInterval);
   }

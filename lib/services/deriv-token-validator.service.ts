@@ -281,22 +281,53 @@ export class DerivTokenValidatorService {
 
   /**
    * Test trading permission by getting a proposal (doesn't execute trade)
-   * Note: This is a simplified test. In production, you'd implement actual proposal API call
+   * This is a read-only operation that validates trading capability without executing a trade
    */
   private static async testTradingPermission(
     wsClient: DerivServerWebSocketClient
   ): Promise<boolean> {
     try {
-      // For now, if we can read balance, we assume trading permission exists
-      // In production, implement actual proposal API call:
-      // const proposal = await wsClient.getProposal({ symbol: 'R_10', contract_type: 'CALL', amount: 1 });
-      // return !!proposal;
-      
-      // Conservative approach: If balance read works, trading likely works
-      // This avoids false negatives while maintaining security
-      return true; // Will be refined with actual API implementation
+      // Get a proposal for a test contract (read-only, doesn't execute trade)
+      // Using a common symbol that should be available (R_10 is a popular forex pair)
+      const proposalResult = await wsClient.getProposal({
+        symbol: 'R_10',
+        contract_type: 'CALL',
+        amount: 1, // Minimum stake for testing
+        duration: 1,
+        duration_unit: 't', // 1 tick
+      });
+
+      // If proposal request succeeds, token has trading permission
+      if (proposalResult.success && proposalResult.proposal) {
+        return true;
+      }
+
+      // If proposal fails with permission error, token doesn't have trading permission
+      if (proposalResult.error) {
+        const errorCode = proposalResult.error.code?.toLowerCase() || '';
+        const errorMessage = proposalResult.error.message?.toLowerCase() || '';
+        
+        // Check for permission-related errors
+        if (errorCode.includes('permission') || 
+            errorCode.includes('unauthorized') ||
+            errorCode.includes('forbidden') ||
+            errorMessage.includes('permission') ||
+            errorMessage.includes('unauthorized') ||
+            errorMessage.includes('forbidden')) {
+          console.warn('[TokenValidator] Trading permission denied:', proposalResult.error.message);
+          return false;
+        }
+        
+        // Other errors (market closed, invalid symbol, etc.) don't indicate lack of permission
+        // If we can request a proposal (even if it fails for non-permission reasons), we have permission
+        return true;
+      }
+
+      // Unknown response - assume no permission for safety
+      return false;
     } catch (error: any) {
       console.warn('[TokenValidator] Trading permission test error:', error);
+      // On error, assume no permission for safety (fail closed)
       return false;
     }
   }
@@ -418,9 +449,21 @@ export class DerivTokenValidatorService {
   static async revokeToken(userId: string, deleteToken: boolean = false): Promise<{
     success: boolean;
     error?: string;
+    sessionsDisconnected?: number;
   }> {
     try {
       await connectToDatabase();
+
+      // PHASE 2 FIX: Disconnect all active WebSocket sessions before revoking token
+      let sessionsDisconnected = 0;
+      try {
+        const { webSocketSessionManager } = await import('./websocket-session-manager.service');
+        sessionsDisconnected = await webSocketSessionManager.disconnectUserSessions(userId);
+        console.log(`[TokenValidator] Disconnected ${sessionsDisconnected} WebSocket session(s) for user ${userId}`);
+      } catch (error: any) {
+        console.warn('[TokenValidator] Failed to disconnect WebSocket sessions:', error);
+        // Continue with token revocation even if session disconnection fails
+      }
 
       if (deleteToken) {
         // Permanently delete token
@@ -429,6 +472,7 @@ export class DerivTokenValidatorService {
           return {
             success: false,
             error: 'Token not found',
+            sessionsDisconnected,
           };
         }
       } else {
@@ -438,6 +482,7 @@ export class DerivTokenValidatorService {
           return {
             success: false,
             error: 'Token not found',
+            sessionsDisconnected,
           };
         }
 
@@ -446,7 +491,7 @@ export class DerivTokenValidatorService {
         await token.save();
       }
 
-      return { success: true };
+      return { success: true, sessionsDisconnected };
     } catch (error: any) {
       console.error('[TokenValidator] Error revoking token:', error);
       return {
@@ -524,8 +569,8 @@ export class DerivTokenValidatorService {
     try {
       await connectToDatabase();
 
-      const tokenDoc = await DerivApiToken.findOne({ userId });
-      if (!tokenDoc) {
+      const tokenDoc = await DerivApiToken.findOne({ userId }).select('+token');
+      if (!tokenDoc || !tokenDoc.token) {
         return {
           success: false,
           error: 'Token not found',

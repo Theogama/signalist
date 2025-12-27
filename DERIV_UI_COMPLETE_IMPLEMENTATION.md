@@ -281,3 +281,4 @@ app/api/deriv/market-data/
 **Version**: 2.0.0
 **Status**: Production Ready
 
+

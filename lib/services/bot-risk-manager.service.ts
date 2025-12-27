@@ -35,6 +35,7 @@ export enum BotStopReason {
   // Market conditions
   MARKET_CLOSED = 'MARKET_CLOSED',
   MARKET_SUSPENDED = 'MARKET_SUSPENDED',
+  MARKET_STATUS_UNKNOWN = 'MARKET_STATUS_UNKNOWN', // Cannot verify market status
   
   // API/Connection issues
   API_ERROR = 'API_ERROR',
@@ -361,7 +362,9 @@ export class BotRiskManager extends EventEmitter {
       };
     }
 
-    // Check stop loss
+    // Check bot-level loss limit (post-trade risk management)
+    // NOTE: This is NOT contract-level stop loss. Binary options expire automatically.
+    // This checks if a single trade loss exceeds configured limits and stops the bot.
     if (settings.stopLossEnabled && profitLoss < 0) {
       const lossAmount = Math.abs(profitLoss);
       const lossPercent = (lossAmount / stake) * 100;
@@ -371,7 +374,7 @@ export class BotRiskManager extends EventEmitter {
           allowed: false,
           shouldStop: true,
           reason: BotStopReason.STOP_LOSS_HIT,
-          message: `Stop loss hit (${lossAmount}/${settings.stopLossAmount})`,
+          message: `Bot-level loss limit hit (${lossAmount}/${settings.stopLossAmount}). Stopping bot.`,
         };
       }
 
@@ -380,7 +383,7 @@ export class BotRiskManager extends EventEmitter {
           allowed: false,
           shouldStop: true,
           reason: BotStopReason.STOP_LOSS_HIT,
-          message: `Stop loss percentage hit (${lossPercent.toFixed(2)}%/${settings.stopLossPercent}%)`,
+          message: `Bot-level loss percentage limit hit (${lossPercent.toFixed(2)}%/${settings.stopLossPercent}%). Stopping bot.`,
         };
       }
     }
@@ -472,11 +475,14 @@ export class BotRiskManager extends EventEmitter {
         shouldStop: false,
       };
     } catch (error: any) {
-      // On error, allow trading but log warning
+      // FAIL-CLOSED: On error, block trading for safety
+      // We cannot verify market status, so trading should be blocked
       console.warn('[BotRiskManager] Market status check failed:', error);
       return {
-        allowed: true,
-        shouldStop: false,
+        allowed: false,
+        shouldStop: true,
+        reason: BotStopReason.MARKET_STATUS_UNKNOWN,
+        message: `Cannot verify market status: ${error.message}. Trading blocked for safety.`,
       };
     }
   }
@@ -592,4 +598,5 @@ export class BotRiskManager extends EventEmitter {
 
 // Singleton instance
 export const botRiskManager = new BotRiskManager();
+
 

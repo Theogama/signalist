@@ -328,3 +328,4 @@ function drawBollingerBands(
   ctx.stroke();
 }
 
+

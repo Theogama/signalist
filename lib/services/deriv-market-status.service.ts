@@ -117,15 +117,20 @@ export class DerivMarketStatusService extends EventEmitter {
     
     try {
       await connectToDatabase();
-      const tokenDoc = await DerivApiToken.findOne({ userId, isValid: true });
+      const tokenDoc = await DerivApiToken.findOne({ userId, isValid: true }).select('+token');
       
-      if (tokenDoc) {
-        const token = await decrypt(tokenDoc.token);
-        this.wsClient = new DerivServerWebSocketClient(token);
-        await this.wsClient.connect();
+      if (tokenDoc && tokenDoc.token) {
+        try {
+          const token = await decrypt(tokenDoc.token);
+          this.wsClient = new DerivServerWebSocketClient(token);
+          await this.wsClient.connect();
+        } catch (decryptError: any) {
+          console.warn('[MarketStatus] Failed to decrypt token, using fallback:', decryptError.message);
+          // Continue with fallback mode - don't set wsClient
+        }
       }
-    } catch (error) {
-      console.warn('[MarketStatus] Failed to initialize WebSocket client, using fallback:', error);
+    } catch (error: any) {
+      console.warn('[MarketStatus] Failed to initialize WebSocket client, using fallback:', error.message);
       // Continue with fallback mode
     }
   }
@@ -526,4 +531,5 @@ export class DerivMarketStatusService extends EventEmitter {
 
 // Export singleton instance
 export const marketStatusService = DerivMarketStatusService.getInstance();
+
 

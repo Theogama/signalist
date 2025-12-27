@@ -11,6 +11,8 @@ import { auth } from '@/lib/better-auth/auth';
 import { headers } from 'next/headers';
 import { connectToDatabase } from '@/database/mongoose';
 import { SignalistBotTrade } from '@/database/models/signalist-bot-trade.model';
+import { DerivApiToken } from '@/database/models/deriv-api-token.model';
+import { decrypt } from '@/lib/utils/encryption';
 import { randomUUID } from 'crypto';
 import { placeDerivBuyContract } from '@/lib/deriv/websocket-client';
 
@@ -96,7 +98,7 @@ export async function POST(request: NextRequest) {
       contract_type,
       stopLoss,
       takeProfit,
-      apiKey,
+      apiKey, // Optional - will use stored token if not provided
     } = body as DerivTradeRequest;
 
     // Validate required fields
@@ -107,11 +109,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!apiKey) {
-      return NextResponse.json(
-        { success: false, error: 'API key or OAuth token required' },
-        { status: 400 }
-      );
+    await connectToDatabase();
+
+    // Get token from database if not provided
+    let token = apiKey;
+    if (!token) {
+      const tokenDoc = await DerivApiToken.findOne({
+        userId,
+        isValid: true,
+      }).select('+token');
+
+      if (!tokenDoc || !tokenDoc.token) {
+        return NextResponse.json(
+          { success: false, error: 'No valid Deriv API token found. Please store a token first.' },
+          { status: 400 }
+        );
+      }
+
+      token = await decrypt(tokenDoc.token);
     }
 
     // Determine contract type for Deriv
@@ -123,7 +138,7 @@ export async function POST(request: NextRequest) {
       : `BOOM500`; // Default to BOOM500 if not specified
 
     // Place trade via Deriv API
-    const tradeResult = await placeDerivTrade(apiKey, {
+    const tradeResult = await placeDerivTrade(token, {
       symbol: derivSymbol,
       side,
       amount,
@@ -142,7 +157,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Save trade to database
-    await connectToDatabase();
     const tradeId = randomUUID();
     
     const trade = new SignalistBotTrade({

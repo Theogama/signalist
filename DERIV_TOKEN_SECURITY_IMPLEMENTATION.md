@@ -299,3 +299,4 @@ For security issues or questions:
 3. Verify environment variables are set
 4. Ensure token has required permissions on Deriv platform
 
+

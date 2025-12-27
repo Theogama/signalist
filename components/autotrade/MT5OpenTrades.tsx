@@ -69,7 +69,7 @@ export default function MT5OpenTrades() {
   useEffect(() => {
     if (connectionId) {
       fetchPositions();
-      const interval = setInterval(fetchPositions, 1000); // Update every 1 second
+      const interval = setInterval(fetchPositions, 5000); // Increased to 5 seconds to reduce load and prevent page blocking
       return () => clearInterval(interval);
     }
   }, [connectionId]);
